@@ -60,6 +60,8 @@ const normalizeSavedAddress = (address) => ({
   label: address.label,
   title: address.title,
   addressLine: address.addressLine,
+  latitude: address.latitude,
+  longitude: address.longitude,
   note: address.note || '',
   isDefault: Boolean(address.isDefault),
 });
@@ -298,6 +300,8 @@ const addSavedAddress = async (req, res) => {
     const title = String(req.body.title || '').trim();
     const addressLine = String(req.body.addressLine || '').trim();
     const note = String(req.body.note || '').trim();
+    const latitude = Number(req.body.latitude);
+    const longitude = Number(req.body.longitude);
     const isDefault = Boolean(req.body.isDefault);
 
     if (!title || !addressLine) {
@@ -306,6 +310,10 @@ const addSavedAddress = async (req, res) => {
 
     if (!['Home', 'Work', 'Other'].includes(label)) {
       return res.status(400).json({ message: 'label must be Home, Work, or Other' });
+    }
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return res.status(400).json({ message: 'latitude and longitude are required' });
     }
 
     const shouldSetDefault = isDefault || (user.savedAddresses || []).length === 0;
@@ -321,6 +329,8 @@ const addSavedAddress = async (req, res) => {
       label,
       title,
       addressLine,
+      latitude,
+      longitude,
       note,
       isDefault: shouldSetDefault,
     });

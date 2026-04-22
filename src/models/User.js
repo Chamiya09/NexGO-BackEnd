@@ -63,6 +63,14 @@ const savedAddressSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    latitude: {
+      type: Number,
+      required: true,
+    },
+    longitude: {
+      type: Number,
+      required: true,
+    },
     note: {
       type: String,
       default: '',
