@@ -1,6 +1,45 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+const paymentMethodSchema = new mongoose.Schema(
+  {
+    cardholderName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    brand: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    last4: {
+      type: String,
+      required: true,
+      minlength: 4,
+      maxlength: 4,
+    },
+    expiryMonth: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    expiryYear: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    isDefault: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    _id: true,
+    timestamps: true,
+  }
+);
+
 const userSchema = new mongoose.Schema(
   {
     fullName: {
@@ -26,6 +65,10 @@ const userSchema = new mongoose.Schema(
       required: true,
       minlength: [6, 'Password must be at least 6 characters long'],
       select: false,
+    },
+    paymentMethods: {
+      type: [paymentMethodSchema],
+      default: [],
     },
   },
   {

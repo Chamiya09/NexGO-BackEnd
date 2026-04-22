@@ -3,6 +3,51 @@ const jwt = require('jsonwebtoken');
 
 const User = require('../models/User');
 
+const buildUserResponse = (user) => ({
+  id: user._id,
+  fullName: user.fullName,
+  email: user.email,
+  phoneNumber: user.phoneNumber,
+});
+
+const getTokenFromRequest = (req) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
+
+  return authHeader.split(' ')[1];
+};
+
+const getAuthenticatedUser = async (req) => {
+  const token = getTokenFromRequest(req);
+  if (!token) {
+    return null;
+  }
+
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  const user = await User.findById(decoded.id);
+  return user;
+};
+
+const normalizeCardNumber = (cardNumber = '') => cardNumber.replace(/\D/g, '');
+
+const detectCardBrand = (cardNumber) => {
+  if (/^4/.test(cardNumber)) {
+    return 'Visa';
+  }
+
+  if (/^(5[1-5]|2[2-7])/.test(cardNumber)) {
+    return 'Mastercard';
+  }
+
+  if (/^3[47]/.test(cardNumber)) {
+    return 'American Express';
+  }
+
+  return 'Card';
+};
+
 const registerUser = async (req, res) => {
   try {
     const { fullName, email, phoneNumber, password } = req.body;
@@ -35,12 +80,7 @@ const registerUser = async (req, res) => {
     return res.status(201).json({
       message: 'User registered successfully',
       token,
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        phoneNumber: user.phoneNumber,
-      },
+      user: buildUserResponse(user),
     });
   } catch (error) {
     console.error('🔥 REGISTRATION ERROR DETAILS: ', error);
@@ -101,12 +141,7 @@ const loginUser = async (req, res) => {
     return res.status(200).json({
       message: 'Login successful',
       token,
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        phoneNumber: user.phoneNumber,
-      },
+      user: buildUserResponse(user),
     });
   } catch (error) {
     console.error('🔥 LOGIN SERVER ERROR: ', error);
@@ -118,29 +153,93 @@ const loginUser = async (req, res) => {
 
 const getMe = async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
 
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    const user = await User.findById(decoded.id);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
     return res.status(200).json({
-      user: {
-        id: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        phoneNumber: user.phoneNumber,
-      },
+      user: buildUserResponse(user),
     });
   } catch (error) {
     return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+};
+
+const getPaymentMethods = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    return res.status(200).json({
+      paymentMethods: user.paymentMethods || [],
+    });
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+};
+
+const addPaymentMethod = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { cardholderName, cardNumber, expiryMonth, expiryYear, isDefault } = req.body;
+
+    if (!cardholderName || !cardNumber || !expiryMonth || !expiryYear) {
+      return res.status(400).json({
+        message: 'cardholderName, cardNumber, expiryMonth, and expiryYear are required',
+      });
+    }
+
+    const normalizedCardNumber = normalizeCardNumber(cardNumber);
+    if (normalizedCardNumber.length < 12 || normalizedCardNumber.length > 19) {
+      return res.status(400).json({ message: 'Card number must be between 12 and 19 digits' });
+    }
+
+    const month = String(expiryMonth).trim();
+    const year = String(expiryYear).trim();
+
+    if (!/^(0?[1-9]|1[0-2])$/.test(month)) {
+      return res.status(400).json({ message: 'Expiry month must be between 1 and 12' });
+    }
+
+    if (!/^\d{2,4}$/.test(year)) {
+      return res.status(400).json({ message: 'Expiry year must be 2 or 4 digits' });
+    }
+
+    const shouldSetDefault = Boolean(isDefault) || (user.paymentMethods || []).length === 0;
+
+    if (shouldSetDefault) {
+      user.paymentMethods = (user.paymentMethods || []).map((method) => ({
+        ...method.toObject(),
+        isDefault: false,
+      }));
+    }
+
+    user.paymentMethods.push({
+      cardholderName: cardholderName.trim(),
+      brand: detectCardBrand(normalizedCardNumber),
+      last4: normalizedCardNumber.slice(-4),
+      expiryMonth: month.padStart(2, '0'),
+      expiryYear: year.length === 2 ? `20${year}` : year,
+      isDefault: shouldSetDefault,
+    });
+
+    await user.save();
+
+    return res.status(201).json({
+      message: 'Payment method added successfully',
+      paymentMethods: user.paymentMethods || [],
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || 'Unable to add payment method',
+    });
   }
 };
 
@@ -148,4 +247,6 @@ module.exports = {
   registerUser,
   loginUser,
   getMe,
+  getPaymentMethods,
+  addPaymentMethod,
 };
