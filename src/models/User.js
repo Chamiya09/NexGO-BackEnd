@@ -19,6 +19,11 @@ const paymentMethodSchema = new mongoose.Schema(
       minlength: 4,
       maxlength: 4,
     },
+    fingerprintHash: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     expiryMonth: {
       type: String,
       required: true,

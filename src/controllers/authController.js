@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
 const User = require('../models/User');
@@ -46,6 +47,11 @@ const detectCardBrand = (cardNumber) => {
   }
 
   return 'Card';
+};
+
+const createCardFingerprint = (cardNumber) => {
+  const secret = process.env.PAYMENT_METHOD_SECRET || process.env.JWT_SECRET;
+  return crypto.createHmac('sha256', secret).update(cardNumber).digest('hex');
 };
 
 const registerUser = async (req, res) => {
@@ -212,6 +218,15 @@ const addPaymentMethod = async (req, res) => {
       return res.status(400).json({ message: 'Expiry year must be 2 or 4 digits' });
     }
 
+    const fingerprintHash = createCardFingerprint(normalizedCardNumber);
+    const existingMethod = (user.paymentMethods || []).find(
+      (method) => method.fingerprintHash === fingerprintHash
+    );
+
+    if (existingMethod) {
+      return res.status(400).json({ message: 'This payment method has already been added' });
+    }
+
     const shouldSetDefault = Boolean(isDefault) || (user.paymentMethods || []).length === 0;
 
     if (shouldSetDefault) {
@@ -225,6 +240,7 @@ const addPaymentMethod = async (req, res) => {
       cardholderName: cardholderName.trim(),
       brand: detectCardBrand(normalizedCardNumber),
       last4: normalizedCardNumber.slice(-4),
+      fingerprintHash,
       expiryMonth: month.padStart(2, '0'),
       expiryYear: year.length === 2 ? `20${year}` : year,
       isDefault: shouldSetDefault,
@@ -243,10 +259,44 @@ const addPaymentMethod = async (req, res) => {
   }
 };
 
+const setDefaultPaymentMethod = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { paymentMethodId } = req.params;
+    const paymentMethods = user.paymentMethods || [];
+    const hasMatch = paymentMethods.some((method) => String(method._id) === paymentMethodId);
+
+    if (!hasMatch) {
+      return res.status(404).json({ message: 'Payment method not found' });
+    }
+
+    user.paymentMethods = paymentMethods.map((method) => ({
+      ...method.toObject(),
+      isDefault: String(method._id) === paymentMethodId,
+    }));
+
+    await user.save();
+
+    return res.status(200).json({
+      message: 'Default payment method updated',
+      paymentMethods: user.paymentMethods || [],
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || 'Unable to update default payment method',
+    });
+  }
+};
+
 module.exports = {
   registerUser,
   loginUser,
   getMe,
   getPaymentMethods,
   addPaymentMethod,
+  setDefaultPaymentMethod,
 };
