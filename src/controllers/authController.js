@@ -172,6 +172,78 @@ const getMe = async (req, res) => {
   }
 };
 
+const updateMe = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const fullName = String(req.body.fullName || '').trim();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const phoneNumber = String(req.body.phoneNumber || '').trim();
+
+    if (!fullName || !email || !phoneNumber) {
+      return res.status(400).json({
+        message: 'fullName, email, and phoneNumber are required',
+      });
+    }
+
+    const existingUser = await User.findOne({
+      email,
+      _id: { $ne: user._id },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ message: 'Email already exists' });
+    }
+
+    user.fullName = fullName;
+    user.email = email;
+    user.phoneNumber = phoneNumber;
+
+    await user.save();
+
+    return res.status(200).json({
+      message: 'Profile updated successfully',
+      user: buildUserResponse(user),
+    });
+  } catch (error) {
+    if (error?.name === 'ValidationError') {
+      const validationMessages = Object.values(error.errors || {})
+        .map((err) => err.message)
+        .filter(Boolean);
+
+      if (validationMessages.length > 0) {
+        return res.status(400).json({ message: validationMessages.join(', ') });
+      }
+    }
+
+    return res.status(500).json({
+      message: error.message || 'Unable to update profile',
+    });
+  }
+};
+
+const deleteMe = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    await User.findByIdAndDelete(user._id);
+
+    return res.status(200).json({
+      message: 'Account deleted successfully',
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || 'Unable to delete account',
+    });
+  }
+};
+
 const getPaymentMethods = async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
@@ -296,6 +368,8 @@ module.exports = {
   registerUser,
   loginUser,
   getMe,
+  updateMe,
+  deleteMe,
   getPaymentMethods,
   addPaymentMethod,
   setDefaultPaymentMethod,
