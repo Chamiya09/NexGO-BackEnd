@@ -17,6 +17,10 @@ app.get('/health', (_req, res) => {
   return res.status(200).json({ status: 'ok', service: 'nexgo-backend' });
 });
 
+app.get('/api/health', (_req, res) => {
+  return res.status(200).json({ status: 'ok', service: 'nexgo-backend' });
+});
+
 app.use('/api/auth', require('./src/routes/authRoutes'));
 
 const PORT = process.env.PORT || 5000;
