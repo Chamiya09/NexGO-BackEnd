@@ -6,6 +6,10 @@ const {
   getMe,
   updateMe,
   deleteMe,
+  getSavedAddresses,
+  addSavedAddress,
+  setDefaultSavedAddress,
+  deleteSavedAddress,
   getPaymentMethods,
   addPaymentMethod,
   setDefaultPaymentMethod,
@@ -18,6 +22,10 @@ router.post('/login', loginUser);
 router.get('/me', getMe);
 router.patch('/me', updateMe);
 router.delete('/me', deleteMe);
+router.get('/saved-addresses', getSavedAddresses);
+router.post('/saved-addresses', addSavedAddress);
+router.patch('/saved-addresses/:addressId/default', setDefaultSavedAddress);
+router.delete('/saved-addresses/:addressId', deleteSavedAddress);
 router.get('/payment-methods', getPaymentMethods);
 router.post('/payment-methods', addPaymentMethod);
 router.patch('/payment-methods/:paymentMethodId/default', setDefaultPaymentMethod);

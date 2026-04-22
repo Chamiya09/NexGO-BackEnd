@@ -55,6 +55,15 @@ const createCardFingerprint = (cardNumber) => {
   return crypto.createHmac('sha256', secret).update(cardNumber).digest('hex');
 };
 
+const normalizeSavedAddress = (address) => ({
+  _id: address._id,
+  label: address.label,
+  title: address.title,
+  addressLine: address.addressLine,
+  note: address.note || '',
+  isDefault: Boolean(address.isDefault),
+});
+
 const registerUser = async (req, res) => {
   try {
     const { fullName, email, phoneNumber, password, profileImageUrl } = req.body;
@@ -263,6 +272,145 @@ const getPaymentMethods = async (req, res) => {
   }
 };
 
+const getSavedAddresses = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    return res.status(200).json({
+      savedAddresses: (user.savedAddresses || []).map(normalizeSavedAddress),
+    });
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+};
+
+const addSavedAddress = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const label = String(req.body.label || 'Other').trim();
+    const title = String(req.body.title || '').trim();
+    const addressLine = String(req.body.addressLine || '').trim();
+    const note = String(req.body.note || '').trim();
+    const isDefault = Boolean(req.body.isDefault);
+
+    if (!title || !addressLine) {
+      return res.status(400).json({ message: 'title and addressLine are required' });
+    }
+
+    if (!['Home', 'Work', 'Other'].includes(label)) {
+      return res.status(400).json({ message: 'label must be Home, Work, or Other' });
+    }
+
+    const shouldSetDefault = isDefault || (user.savedAddresses || []).length === 0;
+
+    if (shouldSetDefault) {
+      user.savedAddresses = (user.savedAddresses || []).map((address) => ({
+        ...address.toObject(),
+        isDefault: false,
+      }));
+    }
+
+    user.savedAddresses.push({
+      label,
+      title,
+      addressLine,
+      note,
+      isDefault: shouldSetDefault,
+    });
+
+    await user.save();
+
+    return res.status(201).json({
+      message: 'Saved address added successfully',
+      savedAddresses: (user.savedAddresses || []).map(normalizeSavedAddress),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || 'Unable to add saved address',
+    });
+  }
+};
+
+const setDefaultSavedAddress = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { addressId } = req.params;
+    const savedAddresses = user.savedAddresses || [];
+    const hasMatch = savedAddresses.some((address) => String(address._id) === addressId);
+
+    if (!hasMatch) {
+      return res.status(404).json({ message: 'Saved address not found' });
+    }
+
+    user.savedAddresses = savedAddresses.map((address) => ({
+      ...address.toObject(),
+      isDefault: String(address._id) === addressId,
+    }));
+
+    await user.save();
+
+    return res.status(200).json({
+      message: 'Default saved address updated',
+      savedAddresses: (user.savedAddresses || []).map(normalizeSavedAddress),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || 'Unable to update default saved address',
+    });
+  }
+};
+
+const deleteSavedAddress = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { addressId } = req.params;
+    const savedAddresses = user.savedAddresses || [];
+    const addressToDelete = savedAddresses.find((address) => String(address._id) === addressId);
+
+    if (!addressToDelete) {
+      return res.status(404).json({ message: 'Saved address not found' });
+    }
+
+    let nextAddresses = savedAddresses.filter((address) => String(address._id) !== addressId);
+
+    if (nextAddresses.length > 0 && !nextAddresses.some((address) => address.isDefault)) {
+      nextAddresses = nextAddresses.map((address, index) => ({
+        ...address.toObject(),
+        isDefault: index === 0,
+      }));
+    } else {
+      nextAddresses = nextAddresses.map((address) => address.toObject());
+    }
+
+    user.savedAddresses = nextAddresses;
+    await user.save();
+
+    return res.status(200).json({
+      message: 'Saved address deleted successfully',
+      savedAddresses: (user.savedAddresses || []).map(normalizeSavedAddress),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || 'Unable to delete saved address',
+    });
+  }
+};
+
 const addPaymentMethod = async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
@@ -374,6 +522,10 @@ module.exports = {
   getMe,
   updateMe,
   deleteMe,
+  getSavedAddresses,
+  addSavedAddress,
+  setDefaultSavedAddress,
+  deleteSavedAddress,
   getPaymentMethods,
   addPaymentMethod,
   setDefaultPaymentMethod,

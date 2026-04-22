@@ -45,6 +45,40 @@ const paymentMethodSchema = new mongoose.Schema(
   }
 );
 
+const savedAddressSchema = new mongoose.Schema(
+  {
+    label: {
+      type: String,
+      enum: ['Home', 'Work', 'Other'],
+      required: true,
+      trim: true,
+    },
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    addressLine: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    note: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    isDefault: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    _id: true,
+    timestamps: true,
+  }
+);
+
 const userSchema = new mongoose.Schema(
   {
     fullName: {
@@ -78,6 +112,10 @@ const userSchema = new mongoose.Schema(
     },
     paymentMethods: {
       type: [paymentMethodSchema],
+      default: [],
+    },
+    savedAddresses: {
+      type: [savedAddressSchema],
       default: [],
     },
   },
