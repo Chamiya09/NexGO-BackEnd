@@ -9,6 +9,7 @@ const buildUserResponse = (user) => ({
   fullName: user.fullName,
   email: user.email,
   phoneNumber: user.phoneNumber,
+  profileImageUrl: user.profileImageUrl || '',
 });
 
 const getTokenFromRequest = (req) => {
@@ -56,7 +57,7 @@ const createCardFingerprint = (cardNumber) => {
 
 const registerUser = async (req, res) => {
   try {
-    const { fullName, email, phoneNumber, password } = req.body;
+    const { fullName, email, phoneNumber, password, profileImageUrl } = req.body;
 
     if (!fullName || !email || !phoneNumber || !password) {
       return res.status(400).json({
@@ -74,6 +75,7 @@ const registerUser = async (req, res) => {
       fullName,
       email: email.toLowerCase(),
       phoneNumber,
+      profileImageUrl: typeof profileImageUrl === 'string' ? profileImageUrl.trim() : '',
       password,
     });
 
@@ -182,6 +184,7 @@ const updateMe = async (req, res) => {
     const fullName = String(req.body.fullName || '').trim();
     const email = String(req.body.email || '').trim().toLowerCase();
     const phoneNumber = String(req.body.phoneNumber || '').trim();
+    const profileImageUrl = String(req.body.profileImageUrl || '').trim();
 
     if (!fullName || !email || !phoneNumber) {
       return res.status(400).json({
@@ -201,6 +204,7 @@ const updateMe = async (req, res) => {
     user.fullName = fullName;
     user.email = email;
     user.phoneNumber = phoneNumber;
+    user.profileImageUrl = profileImageUrl;
 
     await user.save();
 
