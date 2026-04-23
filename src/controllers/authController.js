@@ -3,13 +3,16 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
 const User = require('../models/User');
-const { sendPasswordResetOtpEmail } = require('../services/emailService');
+const { isEmailServiceConfigured, sendPasswordResetOtpEmail } = require('../services/emailService');
 
 const PASSWORD_RESET_SUCCESS_MESSAGE = 'If an account exists, a password reset code has been sent.';
 const PASSWORD_RESET_OTP_LENGTH = Number(process.env.PASSWORD_RESET_OTP_LENGTH || 6);
 const PASSWORD_RESET_OTP_TTL_MINUTES = Number(process.env.PASSWORD_RESET_OTP_TTL_MINUTES || 10);
 const PASSWORD_RESET_RESEND_SECONDS = Number(process.env.PASSWORD_RESET_RESEND_SECONDS || 60);
 const PASSWORD_RESET_MAX_ATTEMPTS = Number(process.env.PASSWORD_RESET_MAX_ATTEMPTS || 5);
+const PASSWORD_RESET_OTP_SECRET = process.env.PASSWORD_RESET_OTP_SECRET || process.env.JWT_SECRET;
+
+const isValidPositiveInteger = (value) => Number.isInteger(value) && value > 0;
 
 const buildUserResponse = (user) => ({
   id: user._id,
@@ -69,8 +72,12 @@ const createPasswordResetOtp = () => {
 };
 
 const createPasswordResetOtpHash = (otp) => {
+  if (!PASSWORD_RESET_OTP_SECRET) {
+    throw new Error('Password reset OTP secret is not configured. Set PASSWORD_RESET_OTP_SECRET or JWT_SECRET.');
+  }
+
   return crypto
-    .createHmac('sha256', process.env.JWT_SECRET)
+    .createHmac('sha256', PASSWORD_RESET_OTP_SECRET)
     .update(otp)
     .digest('hex');
 };
@@ -252,6 +259,42 @@ const forgotPassword = async (req, res) => {
 
 const requestPasswordResetOtp = async (req, res) => {
   try {
+    if (!PASSWORD_RESET_OTP_SECRET) {
+      return res.status(503).json({
+        message: 'Password reset is not configured. Please contact support.',
+      });
+    }
+
+    if (!isValidPositiveInteger(PASSWORD_RESET_OTP_LENGTH) || PASSWORD_RESET_OTP_LENGTH < 4) {
+      return res.status(503).json({
+        message: 'Password reset is temporarily unavailable. Please try again later.',
+      });
+    }
+
+    if (!isValidPositiveInteger(PASSWORD_RESET_OTP_TTL_MINUTES)) {
+      return res.status(503).json({
+        message: 'Password reset is temporarily unavailable. Please try again later.',
+      });
+    }
+
+    if (!isValidPositiveInteger(PASSWORD_RESET_RESEND_SECONDS)) {
+      return res.status(503).json({
+        message: 'Password reset is temporarily unavailable. Please try again later.',
+      });
+    }
+
+    if (!isValidPositiveInteger(PASSWORD_RESET_MAX_ATTEMPTS)) {
+      return res.status(503).json({
+        message: 'Password reset is temporarily unavailable. Please try again later.',
+      });
+    }
+
+    if (!isEmailServiceConfigured()) {
+      return res.status(503).json({
+        message: 'Email service is not configured. Please contact support.',
+      });
+    }
+
     const email = String(req.body.email || '').trim().toLowerCase();
 
     if (!email) {
@@ -281,12 +324,26 @@ const requestPasswordResetOtp = async (req, res) => {
 
     await user.save();
 
-    await sendPasswordResetOtpEmail({
-      toEmail: user.email,
-      toName: user.fullName,
-      otp,
-      ttlMinutes: PASSWORD_RESET_OTP_TTL_MINUTES,
-    });
+    try {
+      await sendPasswordResetOtpEmail({
+        toEmail: user.email,
+        toName: user.fullName,
+        otp,
+        ttlMinutes: PASSWORD_RESET_OTP_TTL_MINUTES,
+      });
+    } catch (emailError) {
+      user.passwordResetOtpHash = null;
+      user.passwordResetOtpExpiresAt = null;
+      user.passwordResetOtpAttempts = 0;
+      user.passwordResetLastSentAt = null;
+
+      await user.save();
+
+      console.error('Password reset OTP email send error:', emailError);
+      return res.status(502).json({
+        message: 'Unable to deliver reset code email. Please try again later.',
+      });
+    }
 
     return res.status(200).json({ message: PASSWORD_RESET_SUCCESS_MESSAGE });
   } catch (error) {

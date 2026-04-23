@@ -2,6 +2,11 @@ const https = require('https');
 
 const BREVO_EMAIL_API_HOST = 'api.brevo.com';
 const BREVO_EMAIL_API_PATH = '/v3/smtp/email';
+const BREVO_REQUEST_TIMEOUT_MS = Number(process.env.BREVO_REQUEST_TIMEOUT_MS || 10000);
+
+const isEmailServiceConfigured = () => {
+  return Boolean(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL);
+};
 
 const getRequiredEnv = (name) => {
   const value = process.env[name];
@@ -49,10 +54,15 @@ const postToBrevo = (payload) =>
             return;
           }
 
-          reject(new Error(parsedBody?.message || 'Brevo email request failed'));
+          const errorMessage = parsedBody?.message || `Brevo email request failed with status ${response.statusCode}`;
+          reject(new Error(errorMessage));
         });
       }
     );
+
+    request.setTimeout(BREVO_REQUEST_TIMEOUT_MS, () => {
+      request.destroy(new Error('Brevo email request timed out'));
+    });
 
     request.on('error', reject);
     request.write(body);
@@ -104,6 +114,7 @@ const sendPasswordResetOtpEmail = ({ toEmail, toName, otp, ttlMinutes }) => {
 };
 
 module.exports = {
+  isEmailServiceConfigured,
   sendTransactionalEmail,
   sendPasswordResetOtpEmail,
 };
