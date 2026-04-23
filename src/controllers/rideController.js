@@ -53,6 +53,32 @@ const getMyRides = async (req, res) => {
   }
 };
 
+// ── GET /api/rides/driver-rides ───────────────────────────────────────────────
+// Returns the authenticated driver's assigned rides, newest first.
+const getDriverRides = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const rides = await Ride.find({ driverId: decoded.id })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+
+    return res.status(200).json({
+      rides: rides.map(normalizeRide),
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] getDriverRides error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to fetch rides' });
+  }
+};
+
 // ── GET /api/rides/:id ────────────────────────────────────────────────────────
 // Returns a single ride (passenger must own it).
 const getRideById = async (req, res) => {
@@ -119,4 +145,4 @@ const cancelRide = async (req, res) => {
   }
 };
 
-module.exports = { getMyRides, getRideById, cancelRide };
+module.exports = { getMyRides, getDriverRides, getRideById, cancelRide };
