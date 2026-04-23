@@ -23,6 +23,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/auth', require('./src/routes/authRoutes'));
 app.use('/api/driver-auth', require('./src/routes/driverAuthRoutes'));
+app.use('/api/upload', require('./src/routes/uploadRoutes'));
 
 const PORT = process.env.PORT || 5000;
 
