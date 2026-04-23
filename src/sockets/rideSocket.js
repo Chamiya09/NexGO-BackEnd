@@ -193,7 +193,7 @@ function initRideSocket(io) {
         // 2. Notify the specific passenger
         const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
         if (passengerSocketId) {
-          io.to(passengerSocketId).emit('rideAccepted', {
+          const acceptanceData = {
             rideId: ride._id.toString(),
             driverId,
             status: ride.status,
@@ -201,9 +201,19 @@ function initRideSocket(io) {
             pickup: ride.pickup,
             dropoff: ride.dropoff,
             vehicleType: ride.vehicleType,
+          };
+
+          // Full acceptance payload (used by confirm-route screen)
+          io.to(passengerSocketId).emit('rideAccepted', acceptanceData);
+
+          // Lightweight status patch (used by Activities screen FlatList)
+          io.to(passengerSocketId).emit('rideStatusUpdate', {
+            rideId: ride._id.toString(),
+            status: ride.status,
           });
+
           console.log(
-            `[Socket.IO] rideAccepted sent to passenger socketId=${passengerSocketId}`
+            `[Socket.IO] rideAccepted + rideStatusUpdate sent to passenger socketId=${passengerSocketId}`
           );
         } else {
           console.warn(
