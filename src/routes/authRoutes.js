@@ -1,8 +1,13 @@
 const express = require('express');
 
+const { createRateLimiter } = require('../middleware/rateLimiter');
+
 const {
   registerUser,
   loginUser,
+  forgotPassword,
+  requestPasswordResetOtp,
+  resetPasswordWithOtp,
   getMe,
   updateMe,
   changePassword,
@@ -18,8 +23,23 @@ const {
 
 const router = express.Router();
 
+const passwordResetRequestLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 5,
+  message: 'Too many password reset requests. Please try again later.',
+});
+
+const passwordResetVerifyLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 10,
+  message: 'Too many password reset attempts. Please try again later.',
+});
+
 router.post('/register', registerUser);
 router.post('/login', loginUser);
+router.post('/forgot-password', forgotPassword);
+router.post('/forgot-password/request-otp', passwordResetRequestLimiter, requestPasswordResetOtp);
+router.post('/forgot-password/reset', passwordResetVerifyLimiter, resetPasswordWithOtp);
 router.get('/me', getMe);
 router.patch('/me', updateMe);
 router.patch('/me/password', changePassword);

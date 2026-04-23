@@ -118,6 +118,24 @@ const userSchema = new mongoose.Schema(
       minlength: [6, 'Password must be at least 6 characters long'],
       select: false,
     },
+    passwordResetOtpHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    passwordResetOtpExpiresAt: {
+      type: Date,
+      default: null,
+    },
+    passwordResetOtpAttempts: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    passwordResetLastSentAt: {
+      type: Date,
+      default: null,
+    },
     paymentMethods: {
       type: [paymentMethodSchema],
       default: [],
