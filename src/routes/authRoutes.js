@@ -5,6 +5,7 @@ const {
   loginUser,
   getMe,
   updateMe,
+  changePassword,
   deleteMe,
   getSavedAddresses,
   addSavedAddress,
@@ -21,6 +22,7 @@ router.post('/register', registerUser);
 router.post('/login', loginUser);
 router.get('/me', getMe);
 router.patch('/me', updateMe);
+router.patch('/me/password', changePassword);
 router.delete('/me', deleteMe);
 router.get('/saved-addresses', getSavedAddresses);
 router.post('/saved-addresses', addSavedAddress);

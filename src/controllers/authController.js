@@ -240,6 +240,65 @@ const updateMe = async (req, res) => {
   }
 };
 
+const changePassword = async (req, res) => {
+  try {
+    const token = getTokenFromRequest(req);
+    if (!token) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('+password');
+
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const currentPassword = String(req.body.currentPassword || '');
+    const newPassword = String(req.body.newPassword || '');
+    const confirmNewPassword = String(req.body.confirmNewPassword || '');
+
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      return res.status(400).json({
+        message: 'currentPassword, newPassword, and confirmNewPassword are required',
+      });
+    }
+
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isCurrentPasswordValid) {
+      return res.status(401).json({ message: 'Your current password is incorrect.' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters long.' });
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      return res.status(400).json({ message: 'New password and confirmation do not match.' });
+    }
+
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    if (isSamePassword) {
+      return res.status(400).json({ message: 'Choose a new password that is different from the current one.' });
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    return res.status(200).json({
+      message: 'Password updated successfully',
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+
+    return res.status(500).json({
+      message: error.message || 'Unable to update password',
+    });
+  }
+};
+
 const deleteMe = async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
@@ -531,6 +590,7 @@ module.exports = {
   loginUser,
   getMe,
   updateMe,
+  changePassword,
   deleteMe,
   getSavedAddresses,
   addSavedAddress,
