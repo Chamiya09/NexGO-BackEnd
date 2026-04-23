@@ -264,6 +264,82 @@ function initRideSocket(io) {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
+    // EVENT: startRide
+    // Emitted by the Driver App when they arrive at pickup and start the trip.
+    //
+    // Payload: { rideId: string, driverId: string }
+    // ─────────────────────────────────────────────────────────────────────────
+    socket.on('startRide', async (payload) => {
+      console.log('[Socket.IO] startRide received:', payload);
+      try {
+        const { rideId, driverId } = payload;
+        const ride = await Ride.findOneAndUpdate(
+          { _id: rideId, driverId },
+          { status: 'InProgress' },
+          { new: true }
+        );
+
+        if (!ride) {
+          socket.emit('rideError', { message: `Ride ${rideId} not found or unauthorized.` });
+          return;
+        }
+
+        // Notify Passenger
+        const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
+        if (passengerSocketId) {
+          io.to(passengerSocketId).emit('rideStatusUpdate', {
+            rideId: ride._id.toString(),
+            status: 'InProgress',
+          });
+        }
+        
+        // Notify Driver back as confirmation
+        socket.emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'InProgress' });
+      } catch (error) {
+        console.error('[Socket.IO] startRide error:', error.message);
+        socket.emit('rideError', { message: 'Failed to start ride.' });
+      }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EVENT: completeRide
+    // Emitted by the Driver App when they reach the destination and finish.
+    //
+    // Payload: { rideId: string, driverId: string }
+    // ─────────────────────────────────────────────────────────────────────────
+    socket.on('completeRide', async (payload) => {
+      console.log('[Socket.IO] completeRide received:', payload);
+      try {
+        const { rideId, driverId } = payload;
+        const ride = await Ride.findOneAndUpdate(
+          { _id: rideId, driverId },
+          { status: 'Completed', completedAt: new Date() },
+          { new: true }
+        );
+
+        if (!ride) {
+          socket.emit('rideError', { message: `Ride ${rideId} not found or unauthorized.` });
+          return;
+        }
+
+        // Notify Passenger
+        const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
+        if (passengerSocketId) {
+          io.to(passengerSocketId).emit('rideStatusUpdate', {
+            rideId: ride._id.toString(),
+            status: 'Completed',
+          });
+        }
+        
+        // Notify Driver back as confirmation
+        socket.emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'Completed' });
+      } catch (error) {
+        console.error('[Socket.IO] completeRide error:', error.message);
+        socket.emit('rideError', { message: 'Failed to complete ride.' });
+      }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
     // EVENT: disconnect
     // ─────────────────────────────────────────────────────────────────────────
     socket.on('disconnect', () => {
