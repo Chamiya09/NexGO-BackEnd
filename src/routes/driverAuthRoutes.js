@@ -5,7 +5,6 @@ const {
   loginDriver,
   getDriverMe,
   updateDriverMe,
-  updateDriverVehicle,
   updateDriverDocument,
   updateDriverSecurity,
   changeDriverPassword,
@@ -18,7 +17,6 @@ router.post('/login', loginDriver);
 router.get('/me', getDriverMe);
 router.patch('/me', updateDriverMe);
 router.patch('/me/password', changeDriverPassword);
-router.patch('/me/vehicle', updateDriverVehicle);
 router.patch('/me/documents/:documentType', updateDriverDocument);
 router.patch('/me/security', updateDriverSecurity);
 

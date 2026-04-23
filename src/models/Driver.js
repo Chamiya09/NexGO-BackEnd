@@ -1,51 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
-const vehicleSchema = new mongoose.Schema(
-  {
-    licensePlate: {
-      type: String,
-      default: '',
-      trim: true,
-      uppercase: true,
-    },
-    carModel: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-    year: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-    color: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-    category: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-    registrationNumber: {
-      type: String,
-      default: '',
-      trim: true,
-      uppercase: true,
-    },
-    status: {
-      type: String,
-      enum: ['pending', 'approved', 'rejected'],
-      default: 'pending',
-    },
-  },
-  {
-    _id: false,
-  }
-);
-
 const documentSchema = new mongoose.Schema(
   {
     documentType: {
@@ -134,10 +89,6 @@ const driverSchema = new mongoose.Schema(
       type: String,
       enum: ['pending', 'active', 'suspended'],
       default: 'pending',
-    },
-    vehicle: {
-      type: vehicleSchema,
-      default: () => ({}),
     },
     documents: {
       type: [documentSchema],

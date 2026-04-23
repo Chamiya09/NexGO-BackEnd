@@ -11,7 +11,6 @@ const buildDriverResponse = (driver) => ({
   emergencyContact: driver.emergencyContact || '',
   profileImageUrl: driver.profileImageUrl || '',
   status: driver.status,
-  vehicle: driver.vehicle || {},
   documents: driver.documents || [],
   security: driver.security || {},
 });
@@ -212,45 +211,6 @@ const updateDriverMe = async (req, res) => {
   }
 };
 
-const updateDriverVehicle = async (req, res) => {
-  try {
-    const driver = await getAuthenticatedDriver(req);
-    if (!driver) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-
-    const vehicle = {
-      licensePlate: String(req.body.licensePlate || '').trim().toUpperCase(),
-      carModel: String(req.body.carModel || '').trim(),
-      year: String(req.body.year || '').trim(),
-      color: String(req.body.color || '').trim(),
-      category: String(req.body.category || '').trim(),
-      registrationNumber: String(req.body.registrationNumber || '').trim().toUpperCase(),
-      status: driver.vehicle?.status || 'pending',
-    };
-
-    if (Object.values(vehicle).some((value) => !value)) {
-      return res.status(400).json({
-        message: 'licensePlate, carModel, year, color, category, and registrationNumber are required',
-      });
-    }
-
-    if (!/^\d{4}$/.test(vehicle.year)) {
-      return res.status(400).json({ message: 'Vehicle year must be a 4-digit year.' });
-    }
-
-    driver.vehicle = vehicle;
-    await driver.save();
-
-    return res.status(200).json({
-      message: 'Vehicle details updated successfully',
-      driver: buildDriverResponse(driver),
-    });
-  } catch (error) {
-    return res.status(500).json({ message: error.message || 'Unable to update vehicle details' });
-  }
-};
-
 const updateDriverDocument = async (req, res) => {
   try {
     const driver = await getAuthenticatedDriver(req);
@@ -387,7 +347,6 @@ module.exports = {
   loginDriver,
   getDriverMe,
   updateDriverMe,
-  updateDriverVehicle,
   updateDriverDocument,
   updateDriverSecurity,
   changeDriverPassword,
