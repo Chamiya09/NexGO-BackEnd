@@ -81,4 +81,42 @@ const getRideById = async (req, res) => {
   }
 };
 
-module.exports = { getMyRides, getRideById };
+// ── PATCH /api/rides/:id/cancel ───────────────────────────────────
+// Passenger cancels their own Pending or Accepted ride.
+const cancelRide = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const ride = await Ride.findOne({
+      _id: req.params.id,
+      passengerId: decoded.id,
+    });
+
+    if (!ride) {
+      return res.status(404).json({ message: 'Ride not found' });
+    }
+
+    if (!['Pending', 'Accepted'].includes(ride.status)) {
+      return res.status(400).json({
+        message: `Cannot cancel a ride with status '${ride.status}'.`,
+      });
+    }
+
+    ride.status = 'Cancelled';
+    ride.cancelledAt = new Date();
+    await ride.save();
+
+    return res.status(200).json({ ride: normalizeRide(ride) });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] cancelRide error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to cancel ride' });
+  }
+};
+
+module.exports = { getMyRides, getRideById, cancelRide };

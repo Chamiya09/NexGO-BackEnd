@@ -158,6 +158,10 @@ function initRideSocket(io) {
             `[Socket.IO] incomingRide sent to ${nearbySocketIds.length} nearby driver(s) for rideId=${rideData.rideId}`
           );
         }
+        // 4. Confirm rideId back to the passenger who requested it
+        socket.emit('rideCreated', { rideId: rideData.rideId });
+        console.log(`[Socket.IO] rideCreated emitted to passenger socket=${socket.id}, rideId=${rideData.rideId}`);
+
       } catch (error) {
         console.error('[Socket.IO] requestRide error:', error.message);
         socket.emit('rideError', {
@@ -223,6 +227,39 @@ function initRideSocket(io) {
       } catch (error) {
         console.error('[Socket.IO] acceptRide error:', error.message);
         socket.emit('rideError', { message: 'Failed to accept ride. Please try again.' });
+      }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EVENT: cancelRide
+    // Emitted by the Passenger App when the passenger cancels a pending ride.
+    //
+    // Payload: { rideId: string }
+    // ─────────────────────────────────────────────────────────────────────────
+    socket.on('cancelRide', async ({ rideId }) => {
+      console.log('[Socket.IO] cancelRide received:', rideId);
+      try {
+        const ride = await Ride.findByIdAndUpdate(
+          rideId,
+          { status: 'Cancelled', cancelledAt: new Date() },
+          { new: true }
+        );
+
+        if (!ride) {
+          socket.emit('rideError', { message: `Ride ${rideId} not found.` });
+          return;
+        }
+
+        // Confirm cancellation back to the passenger
+        socket.emit('rideCancelled', { rideId, status: 'Cancelled' });
+
+        // Notify the Activities screen of the status change
+        socket.emit('rideStatusUpdate', { rideId, status: 'Cancelled' });
+
+        console.log(`[Socket.IO] Ride ${rideId} cancelled successfully`);
+      } catch (error) {
+        console.error('[Socket.IO] cancelRide error:', error.message);
+        socket.emit('rideError', { message: 'Failed to cancel ride. Please try again.' });
       }
     });
 
