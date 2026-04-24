@@ -102,6 +102,10 @@ const driverSchema = new mongoose.Schema(
       type: securitySchema,
       default: () => ({}),
     },
+    isOnline: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

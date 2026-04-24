@@ -75,9 +75,29 @@ function initRideSocket(io) {
     //
     // Payload: { driverId: string, latitude: number, longitude: number }
     // ─────────────────────────────────────────────────────────────────────────
-    socket.on('updateDriverLocation', ({ driverId, latitude, longitude, vehicleCategory }) => {
-      driverLocationMap.set(socket.id, { driverId, latitude, longitude, vehicleCategory });
+    // ─────────────────────────────────────────────────────────────────────────
+    socket.on('updateDriverLocation', ({ driverId, latitude, longitude, vehicleCategory, isOnline }) => {
+      driverLocationMap.set(socket.id, { driverId, latitude, longitude, vehicleCategory, isOnline });
       // Verbose log kept at debug level only to avoid log spam
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EVENT: toggle_online_status
+    // Overriding the driver's availability state cleanly via backend payloads
+    // ─────────────────────────────────────────────────────────────────────────
+    socket.on('toggle_online_status', async ({ driverId, isOnline }) => {
+      try {
+        const Driver = require('../models/Driver');
+        await Driver.findByIdAndUpdate(driverId, { isOnline });
+
+        const loc = driverLocationMap.get(socket.id);
+        if (loc) {
+          loc.isOnline = isOnline;
+          driverLocationMap.set(socket.id, loc);
+        }
+      } catch (error) {
+        console.error('[Socket.IO] toggle_online_status error:', error);
+      }
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -142,6 +162,9 @@ function initRideSocket(io) {
           // Skip the socket that just emitted (it's the passenger)
           if (driverSocketId === socket.id) continue;
 
+          // CRITICAL: Block disconnected or offline sockets from receiving ride bursts
+          if (!location.isOnline) continue;
+
           const dist = haversineDistanceKm(
             pickup.latitude,
             pickup.longitude,
@@ -197,16 +220,20 @@ function initRideSocket(io) {
         const { rideId, driverId } = payload;
 
         // 1. Update ride in MongoDB: Accepted + assign driver
-        const ride = await Ride.findByIdAndUpdate(
-          rideId,
+        // ATOMIC Acceptance: Guarantee status is still Pending preventing race-conditions
+        const ride = await Ride.findOneAndUpdate(
+          { _id: rideId, status: 'Pending' },
           { driverId, status: 'Accepted', acceptedAt: new Date() },
           { new: true }
         );
 
         if (!ride) {
-          socket.emit('rideError', { message: `Ride ${rideId} not found.` });
+          socket.emit('rideError', { message: `Ride ${rideId} is no longer available or was accepted by someone else.` });
           return;
         }
+
+        // CRITICAL: Force all other listening drivers to erase this isolated request off their active feeds instantly
+        socket.broadcast.emit('remove_ride_request', { rideId });
 
         // 2. Notify the specific passenger
         const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
@@ -278,11 +305,36 @@ function initRideSocket(io) {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: startRide
+    // EVENT: driver_arrived
+    // ─────────────────────────────────────────────────────────────────────────
+    socket.on('driver_arrived', async (payload) => {
+      console.log('[Socket.IO] driver_arrived received:', payload);
+      try {
+        const { rideId, driverId } = payload;
+        const ride = await Ride.findOneAndUpdate({ _id: rideId, driverId }, { status: 'Arrived' }, { new: true });
+        if (!ride) return socket.emit('rideError', { message: `Ride ${rideId} not found.` });
+
+        const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
+        if (passengerSocketId) {
+          io.to(passengerSocketId).emit('driver_status', { rideId: ride._id.toString(), status: 'Arrived' });
+          io.to(passengerSocketId).emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'Arrived' });
+        }
+        socket.emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'Arrived' });
+      } catch (error) {
+        console.error('[Socket.IO] driver_arrived error:', error.message);
+      }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EVENT: startRide / start_trip
     // Emitted by the Driver App when they arrive at pickup and start the trip.
     //
     // Payload: { rideId: string, driverId: string }
     // ─────────────────────────────────────────────────────────────────────────
+    socket.on('start_trip', async (payload) => {
+      socket.emit('startRide', payload); // For legacy compatibility locally if needed
+    });
+
     socket.on('startRide', async (payload) => {
       console.log('[Socket.IO] startRide received:', payload);
       try {
