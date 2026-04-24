@@ -75,9 +75,23 @@ function initRideSocket(io) {
     //
     // Payload: { driverId: string, latitude: number, longitude: number }
     // ─────────────────────────────────────────────────────────────────────────
-    socket.on('updateDriverLocation', ({ driverId, latitude, longitude }) => {
-      driverLocationMap.set(socket.id, { driverId, latitude, longitude });
+    socket.on('updateDriverLocation', ({ driverId, latitude, longitude, vehicleCategory }) => {
+      driverLocationMap.set(socket.id, { driverId, latitude, longitude, vehicleCategory });
       // Verbose log kept at debug level only to avoid log spam
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EVENT: get_available_drivers
+    // Emitted by the Passenger App when they select a category or interval triggers
+    // ─────────────────────────────────────────────────────────────────────────
+    socket.on('get_available_drivers', ({ category }) => {
+      const available = [];
+      for (const location of driverLocationMap.values()) {
+        if (!category || location.vehicleCategory === category) {
+          available.push(location);
+        }
+      }
+      socket.emit('available_drivers', available);
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -292,7 +306,7 @@ function initRideSocket(io) {
             status: 'InProgress',
           });
         }
-        
+
         // Notify Driver back as confirmation
         socket.emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'InProgress' });
       } catch (error) {
@@ -330,7 +344,7 @@ function initRideSocket(io) {
             status: 'Completed',
           });
         }
-        
+
         // Notify Driver back as confirmation
         socket.emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'Completed' });
       } catch (error) {
