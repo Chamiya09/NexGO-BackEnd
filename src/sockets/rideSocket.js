@@ -2,34 +2,30 @@
 // Handles all real-time ride events between passengers and drivers.
 
 const Ride = require('../models/Ride');
+const {
+  RIDE_STATUS,
+  toCanonicalStatus,
+  transitionRideById,
+} = require('../services/rideLifecycleService');
 
-// ── In-memory registries ───────────────────────────────────────────────────────
+// -- In-memory registries -------------------------------------------------------
 
 /**
- * Map: passengerId (string) → socket.id
- * Used to emit `rideAccepted` back to the specific passenger.
+ * Map: passengerId (string) -> socket.id
+ * Used to emit ride lifecycle updates back to the specific passenger.
  */
 const passengerSocketMap = new Map();
 
 /**
- * Map: socket.id → { driverId, latitude, longitude }
- * Updated whenever a driver emits `updateDriverLocation`.
- * Used for proximity filtering on ride requests.
+ * Map: socket.id -> { driverId, latitude, longitude }
+ * Updated whenever a driver emits updateDriverLocation.
  */
 const driverLocationMap = new Map();
 
-// ── Haversine formula ─────────────────────────────────────────────────────────
+// -- Haversine formula ---------------------------------------------------------
 
-/**
- * Calculates the great-circle distance between two GPS coordinates.
- * @param {number} lat1
- * @param {number} lon1
- * @param {number} lat2
- * @param {number} lon2
- * @returns {number} Distance in kilometres
- */
 function haversineDistanceKm(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth radius in km
+  const R = 6371;
   const toRad = (deg) => (deg * Math.PI) / 180;
 
   const dLat = toRad(lat2 - lat1);
@@ -44,47 +40,79 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-const DRIVER_RADIUS_KM = 5; // Broadcast radius in kilometres
+const DRIVER_RADIUS_KM = 5;
 
-// ── Socket initialiser ────────────────────────────────────────────────────────
+function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
+  const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
 
-/**
- * Registers all ride-related socket event handlers on a given io instance.
- * @param {import('socket.io').Server} io
- */
+  if (!passengerSocketId) {
+    console.warn(`[Socket.IO] Passenger socket not found for passengerId=${ride.passengerId}`);
+    return;
+  }
+
+  const payload = {
+    rideId: ride._id.toString(),
+    status: ride.status,
+    canonicalStatus: toCanonicalStatus(ride.status),
+    ...extra,
+  };
+
+  io.to(passengerSocketId).emit(eventName, payload);
+  io.to(passengerSocketId).emit('rideStatusUpdate', payload);
+}
+
+async function handleStrictTransition(io, socket, payload, options) {
+  const { rideId, driverId } = payload || {};
+
+  if (!rideId || !driverId) {
+    socket.emit('rideError', { message: 'rideId and driverId are required.' });
+    return;
+  }
+
+  const result = await transitionRideById({
+    rideId,
+    driverId,
+    nextCanonicalStatus: options.nextCanonicalStatus,
+  });
+
+  if (!result.ok) {
+    socket.emit('rideError', {
+      message: result.message,
+      code: result.code,
+      currentCanonicalStatus: result.currentCanonicalStatus,
+      expectedTransition: options.nextCanonicalStatus,
+    });
+    return;
+  }
+
+  emitPassengerLifecycle(io, result.ride, options.passengerEvent, {
+    invoice: result.invoice,
+  });
+
+  socket.emit('rideStatusUpdate', {
+    rideId: result.ride._id.toString(),
+    status: result.ride.status,
+    canonicalStatus: result.nextCanonicalStatus,
+    invoice: result.invoice,
+  });
+}
+
 function initRideSocket(io) {
   io.on('connection', (socket) => {
     console.log(`[Socket.IO] Client connected: ${socket.id}`);
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: registerPassenger
-    // Passenger app calls this on connect so the server maps
-    // their MongoDB userId → socket.id for targeted emit later.
-    // ─────────────────────────────────────────────────────────────────────────
     socket.on('registerPassenger', (passengerId) => {
       passengerSocketMap.set(String(passengerId), socket.id);
       console.log(
-        `[Socket.IO] Passenger registered: userId=${passengerId} → socketId=${socket.id}`
+          `[Socket.IO] Passenger registered: userId=${passengerId} -> socketId=${socket.id}`
       );
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: updateDriverLocation
-    // Driver app calls this periodically (e.g. every 5–10 s) to keep the
-    // server's location map fresh for proximity filtering.
-    //
-    // Payload: { driverId: string, latitude: number, longitude: number }
-    // ─────────────────────────────────────────────────────────────────────────
     socket.on('updateDriverLocation', ({ driverId, latitude, longitude, vehicleCategory, isOnline, heading }) => {
       driverLocationMap.set(socket.id, { driverId, latitude, longitude, vehicleCategory, isOnline });
-      // Broadcast isolated raw tracking vector instantly across channel
       socket.broadcast.emit(`driver_location_${driverId}`, { latitude, longitude, heading });
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: toggle_online_status
-    // Overriding the driver's availability state cleanly via backend payloads
-    // ─────────────────────────────────────────────────────────────────────────
     socket.on('toggle_online_status', async ({ driverId, isOnline }) => {
       try {
         const Driver = require('../models/Driver');
@@ -100,10 +128,6 @@ function initRideSocket(io) {
       }
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: get_available_drivers
-    // Emitted by the Passenger App when they select a category or interval triggers
-    // ─────────────────────────────────────────────────────────────────────────
     socket.on('get_available_drivers', ({ category }) => {
       const available = [];
       for (const location of driverLocationMap.values()) {
@@ -114,36 +138,21 @@ function initRideSocket(io) {
       socket.emit('available_drivers', available);
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: requestRide
-    // Emitted by the Passenger App when the user taps "Confirm Ride".
-    //
-    // Payload:
-    // {
-    //   passengerId  : string,
-    //   passengerName: string,
-    //   vehicleType  : string,   // 'Bike' | 'TukTuk' | 'Mini' | 'Sedan' | 'Van'
-    //   price        : number,
-    //   pickup       : { latitude, longitude, name },
-    //   dropoff      : { latitude, longitude, name },
-    // }
-    // ─────────────────────────────────────────────────────────────────────────
     socket.on('requestRide', async (payload) => {
       console.log('[Socket.IO] requestRide received:', payload);
 
       try {
         const { passengerId, passengerName, vehicleType, price, pickup, dropoff } = payload;
 
-        // 1. Persist a new Ride document in MongoDB
         const ride = await Ride.create({
           passengerId,
           vehicleType,
           price,
           pickup,
           dropoff,
+          status: RIDE_STATUS.PENDING,
         });
 
-        // 2. Build the payload sent to nearby drivers
         const rideData = {
           rideId: ride._id.toString(),
           passengerId,
@@ -153,16 +162,14 @@ function initRideSocket(io) {
           pickup,
           dropoff,
           requestedAt: ride.createdAt,
+          status: ride.status,
+          canonicalStatus: 'PENDING',
         };
 
-        // 3. Find all driver sockets within DRIVER_RADIUS_KM
         const nearbySocketIds = [];
 
         for (const [driverSocketId, location] of driverLocationMap.entries()) {
-          // Skip the socket that just emitted (it's the passenger)
           if (driverSocketId === socket.id) continue;
-
-          // CRITICAL: Block disconnected or offline sockets from receiving ride bursts
           if (!location.isOnline) continue;
 
           const dist = haversineDistanceKm(
@@ -175,19 +182,17 @@ function initRideSocket(io) {
           if (dist <= DRIVER_RADIUS_KM) {
             nearbySocketIds.push(driverSocketId);
             console.log(
-              `[Socket.IO] Driver ${location.driverId} is ${dist.toFixed(2)} km away — within range`
+              `[Socket.IO] Driver ${location.driverId} is ${dist.toFixed(2)} km away - within range`
             );
           }
         }
 
         if (nearbySocketIds.length === 0) {
-          // No nearby drivers tracked yet — fall back to broadcast so dev/testing still works
           console.warn(
-            '[Socket.IO] No nearby drivers found in location map — falling back to broadcast'
+            '[Socket.IO] No nearby drivers found in location map - falling back to broadcast'
           );
           socket.broadcast.emit('incomingRide', rideData);
         } else {
-          // Targeted emit: only nearby drivers receive the event
           for (const driverSocketId of nearbySocketIds) {
             io.to(driverSocketId).emit('incomingRide', rideData);
           }
@@ -195,10 +200,8 @@ function initRideSocket(io) {
             `[Socket.IO] incomingRide sent to ${nearbySocketIds.length} nearby driver(s) for rideId=${rideData.rideId}`
           );
         }
-        // 4. Confirm rideId back to the passenger who requested it
-        socket.emit('rideCreated', { rideId: rideData.rideId });
-        console.log(`[Socket.IO] rideCreated emitted to passenger socket=${socket.id}, rideId=${rideData.rideId}`);
 
+        socket.emit('rideCreated', { rideId: rideData.rideId });
       } catch (error) {
         console.error('[Socket.IO] requestRide error:', error.message);
         socket.emit('rideError', {
@@ -207,63 +210,43 @@ function initRideSocket(io) {
       }
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: acceptRide
-    // Emitted by the Driver App when the driver taps "Accept Ride".
-    //
-    // Payload: { rideId: string, driverId: string }
-    // ─────────────────────────────────────────────────────────────────────────
     socket.on('acceptRide', async (payload) => {
       console.log('[Socket.IO] acceptRide received:', payload);
 
       try {
         const { rideId, driverId } = payload;
 
-        // 1. Update ride in MongoDB: Accepted + assign driver
-        // ATOMIC Acceptance: Guarantee status is still Pending preventing race-conditions
         const ride = await Ride.findOneAndUpdate(
-          { _id: rideId, status: 'Pending' },
-          { driverId, status: 'Accepted', acceptedAt: new Date() },
+          { _id: rideId, status: RIDE_STATUS.PENDING },
+          { driverId, status: RIDE_STATUS.ACCEPTED, acceptedAt: new Date() },
           { new: true }
         );
 
         if (!ride) {
-          socket.emit('rideError', { message: `Ride ${rideId} is no longer available or was accepted by someone else.` });
+          socket.emit('rideError', {
+            message: `Ride ${rideId} is no longer available or was accepted by someone else.`,
+            code: 'INVALID_TRANSITION',
+          });
           return;
         }
 
-        // CRITICAL: Force all other listening drivers to erase this isolated request off their active feeds instantly
         socket.broadcast.emit('remove_ride_request', { rideId });
 
-        // 2. Notify the specific passenger
         const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
         if (passengerSocketId) {
           const acceptanceData = {
             rideId: ride._id.toString(),
             driverId,
             status: ride.status,
+            canonicalStatus: 'ACCEPTED',
             acceptedAt: ride.acceptedAt,
             pickup: ride.pickup,
             dropoff: ride.dropoff,
             vehicleType: ride.vehicleType,
           };
 
-          // Full acceptance payload (used by confirm-route screen)
           io.to(passengerSocketId).emit('rideAccepted', acceptanceData);
-
-          // Lightweight status patch (used by Activities screen FlatList)
-          io.to(passengerSocketId).emit('rideStatusUpdate', {
-            rideId: ride._id.toString(),
-            status: ride.status,
-          });
-
-          console.log(
-            `[Socket.IO] rideAccepted + rideStatusUpdate sent to passenger socketId=${passengerSocketId}`
-          );
-        } else {
-          console.warn(
-            `[Socket.IO] Passenger socket not found for passengerId=${ride.passengerId}`
-          );
+          io.to(passengerSocketId).emit('rideStatusUpdate', acceptanceData);
         }
       } catch (error) {
         console.error('[Socket.IO] acceptRide error:', error.message);
@@ -271,18 +254,12 @@ function initRideSocket(io) {
       }
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: cancelRide
-    // Emitted by the Passenger App when the passenger cancels a pending ride.
-    //
-    // Payload: { rideId: string }
-    // ─────────────────────────────────────────────────────────────────────────
     socket.on('cancelRide', async ({ rideId }) => {
       console.log('[Socket.IO] cancelRide received:', rideId);
       try {
         const ride = await Ride.findByIdAndUpdate(
           rideId,
-          { status: 'Cancelled', cancelledAt: new Date() },
+          { status: RIDE_STATUS.CANCELLED, cancelledAt: new Date() },
           { new: true }
         );
 
@@ -291,134 +268,73 @@ function initRideSocket(io) {
           return;
         }
 
-        // Confirm cancellation back to the passenger
-        socket.emit('rideCancelled', { rideId, status: 'Cancelled' });
+        const payload = {
+          rideId,
+          status: RIDE_STATUS.CANCELLED,
+          canonicalStatus: 'CANCELLED',
+        };
 
-        // Notify the Activities screen of the status change
-        socket.emit('rideStatusUpdate', { rideId, status: 'Cancelled' });
-
-        console.log(`[Socket.IO] Ride ${rideId} cancelled successfully`);
+        socket.emit('rideCancelled', payload);
+        socket.emit('rideStatusUpdate', payload);
       } catch (error) {
         console.error('[Socket.IO] cancelRide error:', error.message);
         socket.emit('rideError', { message: 'Failed to cancel ride. Please try again.' });
       }
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: driver_arrived
-    // ─────────────────────────────────────────────────────────────────────────
+    // Strict transitions: ACCEPTED -> ARRIVED
     socket.on('driver_arrived', async (payload) => {
       console.log('[Socket.IO] driver_arrived received:', payload);
       try {
-        const { rideId, driverId } = payload;
-        const ride = await Ride.findOneAndUpdate({ _id: rideId, driverId }, { status: 'Arrived' }, { new: true });
-        if (!ride) return socket.emit('rideError', { message: `Ride ${rideId} not found.` });
-
-        const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
-        if (passengerSocketId) {
-          io.to(passengerSocketId).emit('driver_status', { rideId: ride._id.toString(), status: 'Arrived' });
-          io.to(passengerSocketId).emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'Arrived' });
-        }
-        socket.emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'Arrived' });
+        await handleStrictTransition(io, socket, payload, {
+          nextCanonicalStatus: 'ARRIVED',
+          passengerEvent: 'driver_arrived',
+        });
       } catch (error) {
         console.error('[Socket.IO] driver_arrived error:', error.message);
+        socket.emit('rideError', { message: 'Failed to mark ride as arrived.' });
       }
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: startRide / start_trip
-    // Emitted by the Driver App when they arrive at pickup and start the trip.
-    //
-    // Payload: { rideId: string, driverId: string }
-    // ─────────────────────────────────────────────────────────────────────────
+    // Strict transitions: ARRIVED -> IN_TRANSIT
     socket.on('start_trip', async (payload) => {
-      socket.emit('startRide', payload); // For legacy compatibility locally if needed
-    });
-
-    socket.on('startRide', async (payload) => {
-      console.log('[Socket.IO] startRide received:', payload);
+      console.log('[Socket.IO] start_trip received:', payload);
       try {
-        const { rideId, driverId } = payload;
-        const ride = await Ride.findOneAndUpdate(
-          { _id: rideId, driverId },
-          { status: 'InProgress' },
-          { new: true }
-        );
-
-        if (!ride) {
-          socket.emit('rideError', { message: `Ride ${rideId} not found or unauthorized.` });
-          return;
-        }
-
-        // Notify Passenger
-        const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
-        if (passengerSocketId) {
-          io.to(passengerSocketId).emit('rideStatusUpdate', {
-            rideId: ride._id.toString(),
-            status: 'InProgress',
-          });
-        }
-
-        // Notify Driver back as confirmation
-        socket.emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'InProgress' });
+        await handleStrictTransition(io, socket, payload, {
+          nextCanonicalStatus: 'IN_TRANSIT',
+          passengerEvent: 'trip_started',
+        });
       } catch (error) {
-        console.error('[Socket.IO] startRide error:', error.message);
-        socket.emit('rideError', { message: 'Failed to start ride.' });
+        console.error('[Socket.IO] start_trip error:', error.message);
+        socket.emit('rideError', { message: 'Failed to start trip.' });
       }
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: completeRide
-    // Emitted by the Driver App when they reach the destination and finish.
-    //
-    // Payload: { rideId: string, driverId: string }
-    // ─────────────────────────────────────────────────────────────────────────
-    socket.on('completeRide', async (payload) => {
-      console.log('[Socket.IO] completeRide received:', payload);
+    // Strict transitions: IN_TRANSIT -> COMPLETED (includes billing hook)
+    socket.on('complete_trip', async (payload) => {
+      console.log('[Socket.IO] complete_trip received:', payload);
       try {
-        const { rideId, driverId } = payload;
-        const ride = await Ride.findOneAndUpdate(
-          { _id: rideId, driverId },
-          { status: 'Completed', completedAt: new Date() },
-          { new: true }
-        );
-
-        if (!ride) {
-          socket.emit('rideError', { message: `Ride ${rideId} not found or unauthorized.` });
-          return;
-        }
-
-        // Notify Passenger
-        const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
-        if (passengerSocketId) {
-          io.to(passengerSocketId).emit('rideStatusUpdate', {
-            rideId: ride._id.toString(),
-            status: 'Completed',
-          });
-        }
-
-        // Notify Driver back as confirmation
-        socket.emit('rideStatusUpdate', { rideId: ride._id.toString(), status: 'Completed' });
+        await handleStrictTransition(io, socket, payload, {
+          nextCanonicalStatus: 'COMPLETED',
+          passengerEvent: 'trip_completed',
+        });
       } catch (error) {
-        console.error('[Socket.IO] completeRide error:', error.message);
-        socket.emit('rideError', { message: 'Failed to complete ride.' });
+        console.error('[Socket.IO] complete_trip error:', error.message);
+        socket.emit('rideError', { message: 'Failed to complete trip.' });
       }
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EVENT: disconnect
-    // ─────────────────────────────────────────────────────────────────────────
+    // Backward compatibility aliases
+    socket.on('startRide', (payload) => socket.emit('start_trip', payload));
+    socket.on('completeRide', (payload) => socket.emit('complete_trip', payload));
+
     socket.on('disconnect', () => {
-      // Clean up driver location entry
       driverLocationMap.delete(socket.id);
 
-      // Clean up passenger entry
       for (const [passengerId, socketId] of passengerSocketMap.entries()) {
         if (socketId === socket.id) {
           passengerSocketMap.delete(passengerId);
-          console.log(
-            `[Socket.IO] Cleaned up passenger mapping for userId=${passengerId}`
-          );
+          console.log(`[Socket.IO] Cleaned up passenger mapping for userId=${passengerId}`);
           break;
         }
       }

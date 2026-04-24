@@ -3,6 +3,10 @@
 
 const jwt = require('jsonwebtoken');
 const Ride = require('../models/Ride');
+const {
+  toCanonicalStatus,
+  RIDE_STATUS,
+} = require('../services/rideLifecycleService');
 
 // ── Reusable auth helper (same pattern as authController.js) ──────────────────
 const getAuthenticatedUser = (req) => {
@@ -22,6 +26,7 @@ const normalizeRide = (ride) => ({
   vehicleType: ride.vehicleType,
   price: ride.price,
   status: ride.status,
+  canonicalStatus: toCanonicalStatus(ride.status),
   requestedAt: ride.createdAt,
   acceptedAt: ride.acceptedAt ?? null,
   completedAt: ride.completedAt ?? null,
@@ -125,7 +130,7 @@ const cancelRide = async (req, res) => {
       return res.status(404).json({ message: 'Ride not found' });
     }
 
-    if (!['Pending', 'Accepted'].includes(ride.status)) {
+    if (![RIDE_STATUS.PENDING, RIDE_STATUS.ACCEPTED].includes(ride.status)) {
       return res.status(400).json({
         message: `Cannot cancel a ride with status '${ride.status}'.`,
       });
