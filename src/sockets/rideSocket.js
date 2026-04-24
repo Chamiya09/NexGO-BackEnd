@@ -75,10 +75,10 @@ function initRideSocket(io) {
     //
     // Payload: { driverId: string, latitude: number, longitude: number }
     // ─────────────────────────────────────────────────────────────────────────
-    // ─────────────────────────────────────────────────────────────────────────
-    socket.on('updateDriverLocation', ({ driverId, latitude, longitude, vehicleCategory, isOnline }) => {
+    socket.on('updateDriverLocation', ({ driverId, latitude, longitude, vehicleCategory, isOnline, heading }) => {
       driverLocationMap.set(socket.id, { driverId, latitude, longitude, vehicleCategory, isOnline });
-      // Verbose log kept at debug level only to avoid log spam
+      // Broadcast isolated raw tracking vector instantly across channel
+      socket.broadcast.emit(`driver_location_${driverId}`, { latitude, longitude, heading });
     });
 
     // ─────────────────────────────────────────────────────────────────────────
