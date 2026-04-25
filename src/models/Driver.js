@@ -49,6 +49,53 @@ const securitySchema = new mongoose.Schema(
   }
 );
 
+const vehicleSchema = new mongoose.Schema(
+  {
+    category: {
+      type: String,
+      enum: ['Bike', 'Tuk', 'Mini', 'Car', 'Van'],
+      required: true,
+    },
+    make: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    model: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    year: {
+      type: Number,
+      required: true,
+      min: [1980, 'Vehicle year must be 1980 or later'],
+      max: [2100, 'Vehicle year is not valid'],
+    },
+    plateNumber: {
+      type: String,
+      required: true,
+      uppercase: true,
+      trim: true,
+    },
+    color: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    seats: {
+      type: Number,
+      required: true,
+      min: [1, 'Vehicle must have at least 1 passenger seat'],
+      max: [60, 'Vehicle seat count is not valid'],
+    },
+  },
+  {
+    _id: false,
+    timestamps: true,
+  }
+);
+
 const driverSchema = new mongoose.Schema(
   {
     fullName: {
@@ -101,6 +148,10 @@ const driverSchema = new mongoose.Schema(
     security: {
       type: securitySchema,
       default: () => ({}),
+    },
+    vehicle: {
+      type: vehicleSchema,
+      default: null,
     },
     isOnline: {
       type: Boolean,

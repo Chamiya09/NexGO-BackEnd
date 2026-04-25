@@ -6,6 +6,7 @@ const {
   getDriverMe,
   updateDriverMe,
   updateDriverDocument,
+  createDriverVehicle,
   updateDriverSecurity,
   changeDriverPassword,
 } = require('../controllers/driverAuthController');
@@ -17,6 +18,7 @@ router.post('/login', loginDriver);
 router.get('/me', getDriverMe);
 router.patch('/me', updateDriverMe);
 router.patch('/me/password', changeDriverPassword);
+router.post('/me/vehicle', createDriverVehicle);
 router.patch('/me/documents/:documentType', updateDriverDocument);
 router.patch('/me/security', updateDriverSecurity);
 
