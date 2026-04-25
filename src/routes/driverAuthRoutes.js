@@ -8,6 +8,8 @@ const {
   updateDriverDocument,
   getDriverVehicle,
   createDriverVehicle,
+  updateDriverVehicle,
+  deleteDriverVehicle,
   updateDriverSecurity,
   changeDriverPassword,
 } = require('../controllers/driverAuthController');
@@ -21,6 +23,8 @@ router.patch('/me', updateDriverMe);
 router.patch('/me/password', changeDriverPassword);
 router.get('/me/vehicle', getDriverVehicle);
 router.post('/me/vehicle', createDriverVehicle);
+router.patch('/me/vehicle', updateDriverVehicle);
+router.delete('/me/vehicle', deleteDriverVehicle);
 router.patch('/me/documents/:documentType', updateDriverDocument);
 router.patch('/me/security', updateDriverSecurity);
 
