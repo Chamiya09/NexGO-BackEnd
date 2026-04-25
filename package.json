@@ -21,10 +21,14 @@
   "homepage": "https://github.com/Chamiya09/NexGO-BackEnd#readme",
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.9.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.17.1"
+    "mongoose": "^8.17.1",
+    "multer": "^2.1.1",
+    "multer-storage-cloudinary": "^2.2.1",
+    "socket.io": "^4.8.3"
   }
 }
