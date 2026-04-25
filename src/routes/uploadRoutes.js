@@ -21,6 +21,7 @@ router.post('/', (req, res) => {
 
     return res.status(201).json({
       message: 'File uploaded successfully.',
+      fileUrl: req.file.path,
       url: req.file.path,
       secureUrl: req.file.path,
       publicId: req.file.filename,
