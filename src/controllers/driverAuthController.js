@@ -261,6 +261,21 @@ const updateDriverDocument = async (req, res) => {
   }
 };
 
+const getDriverVehicle = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    return res.status(200).json({
+      vehicle: driver.vehicle || null,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to load driver vehicle' });
+  }
+};
+
 const createDriverVehicle = async (req, res) => {
   try {
     const driver = await getAuthenticatedDriver(req);
@@ -418,6 +433,7 @@ module.exports = {
   getDriverMe,
   updateDriverMe,
   updateDriverDocument,
+  getDriverVehicle,
   createDriverVehicle,
   updateDriverSecurity,
   changeDriverPassword,
