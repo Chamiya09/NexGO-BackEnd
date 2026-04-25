@@ -19,14 +19,22 @@ router.post('/', (req, res) => {
       return res.status(400).json({ message: 'No file was uploaded.' });
     }
 
+    const fileUrl = req.file.secure_url || req.file.url;
+
+    if (!fileUrl) {
+      return res.status(500).json({ message: 'File uploaded, but Cloudinary did not return a file URL.' });
+    }
+
     return res.status(201).json({
       message: 'File uploaded successfully.',
-      fileUrl: req.file.path,
-      url: req.file.path,
-      secureUrl: req.file.path,
-      publicId: req.file.filename,
+      fileUrl,
+      url: req.file.url,
+      secureUrl: req.file.secure_url,
+      publicId: req.file.public_id,
       originalName: req.file.originalname,
       mimetype: req.file.mimetype,
+      resourceType: req.file.resource_type,
+      bytes: req.file.bytes,
     });
   });
 });

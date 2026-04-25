@@ -15,16 +15,16 @@ const allowedMimeTypes = new Set([
 
 const storage = new CloudinaryStorage({
   cloudinary,
-  params: async (_req, file) => {
+  params: (_req, file, callback) => {
     const originalExtension = path.extname(file.originalname || '').replace('.', '').toLowerCase();
 
-    return {
+    callback(undefined, {
       folder: 'nexgo/uploads',
       resource_type: 'auto',
       allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf'],
       format: originalExtension || undefined,
       public_id: `${Date.now()}-${path.basename(file.originalname || 'upload', path.extname(file.originalname || ''))}`,
-    };
+    });
   },
 });
 
