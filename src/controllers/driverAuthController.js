@@ -157,6 +157,18 @@ const getDriverMe = async (req, res) => {
   }
 };
 
+const listDrivers = async (_req, res) => {
+  try {
+    const drivers = await Driver.find().sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      drivers: drivers.map(buildDriverResponse),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to load drivers' });
+  }
+};
+
 const updateDriverMe = async (req, res) => {
   try {
     const driver = await getAuthenticatedDriver(req);
@@ -503,6 +515,7 @@ module.exports = {
   registerDriver,
   loginDriver,
   getDriverMe,
+  listDrivers,
   updateDriverMe,
   updateDriverDocument,
   getDriverVehicle,
