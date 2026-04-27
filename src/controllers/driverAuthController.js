@@ -12,6 +12,7 @@ const buildDriverResponse = (driver) => ({
   profileImageUrl: driver.profileImageUrl || '',
   status: driver.status,
   documents: driver.documents || [],
+  vehicle: driver.vehicle || null,
   security: driver.security || {},
 });
 
@@ -260,6 +261,162 @@ const updateDriverDocument = async (req, res) => {
   }
 };
 
+const getDriverVehicle = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    return res.status(200).json({
+      vehicle: driver.vehicle || null,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to load driver vehicle' });
+  }
+};
+
+const buildVehiclePayload = (body) => {
+  const category = String(body.category || '').trim();
+  const make = String(body.make || '').trim();
+  const model = String(body.model || '').trim();
+  const year = Number(body.year);
+  const plateNumber = String(body.plateNumber || '').trim().toUpperCase();
+  const color = String(body.color || '').trim();
+  const seats = Number(body.seats);
+  const allowedCategories = ['Bike', 'Tuk', 'Mini', 'Car', 'Van'];
+
+  if (!category || !make || !model || !year || !plateNumber || !color || !seats) {
+    return {
+      error: 'category, make, model, year, plateNumber, color, and seats are required',
+    };
+  }
+
+  if (!allowedCategories.includes(category)) {
+    return { error: 'category must be Bike, Tuk, Mini, Car, or Van' };
+  }
+
+  if (!Number.isInteger(year) || year < 1980 || year > 2100) {
+    return { error: 'Enter a valid manufacture year.' };
+  }
+
+  if (!Number.isInteger(seats) || seats < 1 || seats > 60) {
+    return { error: 'Enter a valid passenger seat count.' };
+  }
+
+  return {
+    vehicle: {
+      category,
+      make,
+      model,
+      year,
+      plateNumber,
+      color,
+      seats,
+    },
+  };
+};
+
+const createDriverVehicle = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    if (driver.vehicle) {
+      return res.status(400).json({ message: 'A vehicle is already added. Use the update vehicle step to change it.' });
+    }
+
+    const { vehicle, error } = buildVehiclePayload(req.body);
+    if (error) {
+      return res.status(400).json({ message: error });
+    }
+
+    driver.vehicle = vehicle;
+
+    await driver.save();
+
+    return res.status(201).json({
+      message: 'Driver vehicle added successfully',
+      driver: buildDriverResponse(driver),
+    });
+  } catch (error) {
+    if (error?.name === 'ValidationError') {
+      const validationMessages = Object.values(error.errors || {})
+        .map((err) => err.message)
+        .filter(Boolean);
+
+      if (validationMessages.length > 0) {
+        return res.status(400).json({ message: validationMessages.join(', ') });
+      }
+    }
+
+    return res.status(500).json({ message: error.message || 'Unable to add driver vehicle' });
+  }
+};
+
+const updateDriverVehicle = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    if (!driver.vehicle) {
+      return res.status(404).json({ message: 'No vehicle found. Add a vehicle before updating it.' });
+    }
+
+    const { vehicle, error } = buildVehiclePayload(req.body);
+    if (error) {
+      return res.status(400).json({ message: error });
+    }
+
+    driver.vehicle = vehicle;
+    await driver.save();
+
+    return res.status(200).json({
+      message: 'Driver vehicle updated successfully',
+      driver: buildDriverResponse(driver),
+    });
+  } catch (error) {
+    if (error?.name === 'ValidationError') {
+      const validationMessages = Object.values(error.errors || {})
+        .map((err) => err.message)
+        .filter(Boolean);
+
+      if (validationMessages.length > 0) {
+        return res.status(400).json({ message: validationMessages.join(', ') });
+      }
+    }
+
+    return res.status(500).json({ message: error.message || 'Unable to update driver vehicle' });
+  }
+};
+
+const deleteDriverVehicle = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    if (!driver.vehicle) {
+      return res.status(404).json({ message: 'No vehicle found to delete.' });
+    }
+
+    driver.vehicle = null;
+    await driver.save();
+
+    return res.status(200).json({
+      message: 'Driver vehicle deleted successfully',
+      driver: buildDriverResponse(driver),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to delete driver vehicle' });
+  }
+};
+
 const updateDriverSecurity = async (req, res) => {
   try {
     const driver = await getAuthenticatedDriver(req);
@@ -348,6 +505,10 @@ module.exports = {
   getDriverMe,
   updateDriverMe,
   updateDriverDocument,
+  getDriverVehicle,
+  createDriverVehicle,
+  updateDriverVehicle,
+  deleteDriverVehicle,
   updateDriverSecurity,
   changeDriverPassword,
 };
