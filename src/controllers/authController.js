@@ -22,6 +22,11 @@ const buildUserResponse = (user) => ({
   profileImageUrl: user.profileImageUrl || '',
 });
 
+const buildUserManagementResponse = (user) => ({
+  ...buildUserResponse(user),
+  createdAt: user.createdAt,
+});
+
 const getTokenFromRequest = (req) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -40,6 +45,18 @@ const getAuthenticatedUser = async (req) => {
   const decoded = jwt.verify(token, process.env.JWT_SECRET);
   const user = await User.findById(decoded.id);
   return user;
+};
+
+const listUsers = async (_req, res) => {
+  try {
+    const users = await User.find().sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      users: users.map(buildUserManagementResponse),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to load users' });
+  }
 };
 
 const normalizeCardNumber = (cardNumber = '') => cardNumber.replace(/\D/g, '');
@@ -859,6 +876,7 @@ const setDefaultPaymentMethod = async (req, res) => {
 module.exports = {
   registerUser,
   loginUser,
+  listUsers,
   forgotPassword,
   requestPasswordResetOtp,
   resetPasswordWithOtp,

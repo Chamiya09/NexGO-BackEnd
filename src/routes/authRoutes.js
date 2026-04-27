@@ -5,6 +5,7 @@ const { createRateLimiter } = require('../middleware/rateLimiter');
 const {
   registerUser,
   loginUser,
+  listUsers,
   forgotPassword,
   requestPasswordResetOtp,
   resetPasswordWithOtp,
@@ -37,6 +38,7 @@ const passwordResetVerifyLimiter = createRateLimiter({
 
 router.post('/register', registerUser);
 router.post('/login', loginUser);
+router.get('/users', listUsers);
 router.post('/forgot-password', forgotPassword);
 router.post('/forgot-password/request-otp', passwordResetRequestLimiter, requestPasswordResetOtp);
 router.post('/forgot-password/reset', passwordResetVerifyLimiter, resetPasswordWithOtp);
