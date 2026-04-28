@@ -47,6 +47,11 @@ const DRIVER_DISPLAY_RADIUS_KM = 2;
 const DRIVER_REQUEST_RADIUS_KM = 2;
 const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
 const rideRecipientSocketMap = new Map();
+const PASSENGER_ROOM_PREFIX = 'passenger:';
+
+function getPassengerRoom(passengerId) {
+  return `${PASSENGER_ROOM_PREFIX}${String(passengerId)}`;
+}
 
 function normalizeVehicleCategory(category) {
   const value = String(category || '').trim();
@@ -119,19 +124,26 @@ function getPassengerSocketIds(passengerId) {
   return passengerSocketMap.get(String(passengerId)) ?? new Set();
 }
 
+function registerPassengerSocket(socket, passengerId) {
+  const passengerKey = String(passengerId || '');
+  if (!passengerKey) return;
+
+  const passengerSocketIds = getPassengerSocketIds(passengerKey);
+  passengerSocketIds.add(socket.id);
+  passengerSocketMap.set(passengerKey, passengerSocketIds);
+  socket.join(getPassengerRoom(passengerKey));
+}
+
 function emitToPassenger(io, passengerId, eventName, payload) {
   const passengerSocketIds = getPassengerSocketIds(passengerId);
 
   if (passengerSocketIds.size === 0) {
     console.warn(`[Socket.IO] Passenger socket not found for passengerId=${passengerId}`);
-    return false;
   }
 
-  for (const passengerSocketId of passengerSocketIds) {
-    io.to(passengerSocketId).emit(eventName, payload);
-  }
+  io.to(getPassengerRoom(passengerId)).emit(eventName, payload);
 
-  return true;
+  return passengerSocketIds.size > 0;
 }
 
 function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
@@ -187,10 +199,7 @@ function initRideSocket(io) {
     console.log(`[Socket.IO] Client connected: ${socket.id}`);
 
     socket.on('registerPassenger', (passengerId) => {
-      const passengerKey = String(passengerId);
-      const passengerSocketIds = getPassengerSocketIds(passengerKey);
-      passengerSocketIds.add(socket.id);
-      passengerSocketMap.set(passengerKey, passengerSocketIds);
+      registerPassengerSocket(socket, passengerId);
       console.log(
           `[Socket.IO] Passenger registered: userId=${passengerId} -> socketId=${socket.id}`
       );
@@ -278,6 +287,7 @@ function initRideSocket(io) {
 
       try {
         const { passengerId, passengerName, vehicleType, price, pickup, dropoff } = payload;
+        registerPassengerSocket(socket, passengerId);
         const requestedVehicleType = normalizeVehicleCategory(vehicleType);
 
         if (!ALLOWED_VEHICLE_CATEGORIES.has(requestedVehicleType)) {
