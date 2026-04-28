@@ -22,6 +22,7 @@ const passengerSocketMap = new Map();
  * Updated whenever a driver emits updateDriverLocation.
  */
 const driverLocationMap = new Map();
+const driverSocketMap = new Map();
 
 // -- Haversine formula ---------------------------------------------------------
 
@@ -55,6 +56,24 @@ function normalizeVehicleCategory(category) {
 
 function hasValidCoords(location) {
   return Number.isFinite(Number(location?.latitude)) && Number.isFinite(Number(location?.longitude));
+}
+
+function getOnlineDriverLocations(category) {
+  const requestedCategory = normalizeVehicleCategory(category);
+  const latestByDriverId = new Map();
+
+  for (const [driverSocketId, location] of driverLocationMap.entries()) {
+    if (!location?.isOnline || !hasValidCoords(location)) continue;
+    if (requestedCategory && normalizeVehicleCategory(location.vehicleCategory) !== requestedCategory) continue;
+
+    const driverKey = String(location.driverId || driverSocketId);
+    const previous = latestByDriverId.get(driverKey);
+    if (!previous || Number(location.updatedAt || 0) > Number(previous.location.updatedAt || 0)) {
+      latestByDriverId.set(driverKey, { driverSocketId, location });
+    }
+  }
+
+  return Array.from(latestByDriverId.values());
 }
 
 function getRideErrorMessage(error) {
@@ -150,12 +169,30 @@ function initRideSocket(io) {
         }
       }
 
+      const normalizedDriverId = driverId ? String(driverId) : '';
+      if (normalizedDriverId) {
+        const previousSocketId = driverSocketMap.get(normalizedDriverId);
+        if (previousSocketId && previousSocketId !== socket.id) {
+          driverLocationMap.delete(previousSocketId);
+        }
+        driverSocketMap.set(normalizedDriverId, socket.id);
+      }
+
+      const previousLocation = driverLocationMap.get(socket.id);
+      const nextIsOnline =
+        typeof isOnline === 'boolean'
+          ? isOnline
+          : typeof previousLocation?.isOnline === 'boolean'
+            ? previousLocation.isOnline
+            : false;
+
       driverLocationMap.set(socket.id, {
         driverId,
-        latitude,
-        longitude,
+        latitude: Number(latitude),
+        longitude: Number(longitude),
         vehicleCategory: nextVehicleCategory,
-        isOnline,
+        isOnline: nextIsOnline,
+        updatedAt: Date.now(),
       });
       socket.broadcast.emit(`driver_location_${driverId}`, { latitude, longitude, heading });
     });
@@ -178,23 +215,20 @@ function initRideSocket(io) {
     socket.on('get_available_drivers', ({ category, latitude, longitude }) => {
       const available = [];
       const requestedCategory = normalizeVehicleCategory(category);
-      for (const location of driverLocationMap.values()) {
-        if (!location.isOnline) continue;
-        if (!requestedCategory || normalizeVehicleCategory(location.vehicleCategory) === requestedCategory) {
-          const hasPassengerCoords = Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
-          if (hasPassengerCoords) {
-            const dist = haversineDistanceKm(
-              Number(latitude),
-              Number(longitude),
-              location.latitude,
-              location.longitude
-            );
+      for (const { location } of getOnlineDriverLocations(requestedCategory)) {
+        const hasPassengerCoords = Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
+        if (hasPassengerCoords) {
+          const dist = haversineDistanceKm(
+            Number(latitude),
+            Number(longitude),
+            location.latitude,
+            location.longitude
+          );
 
-            if (dist > DRIVER_DISPLAY_RADIUS_KM) continue;
-            available.push({ ...location, distanceKm: Number(dist.toFixed(2)) });
-          } else {
-            available.push(location);
-          }
+          if (dist > DRIVER_DISPLAY_RADIUS_KM) continue;
+          available.push({ ...location, distanceKm: Number(dist.toFixed(2)) });
+        } else {
+          available.push(location);
         }
       }
       socket.emit('available_drivers', available);
@@ -217,14 +251,8 @@ function initRideSocket(io) {
 
         const matchingDrivers = [];
 
-        for (const [driverSocketId, location] of driverLocationMap.entries()) {
+        for (const { driverSocketId, location } of getOnlineDriverLocations(requestedVehicleType)) {
           if (driverSocketId === socket.id) continue;
-          if (!location.isOnline) continue;
-          if (
-            requestedVehicleType &&
-            normalizeVehicleCategory(location.vehicleCategory) !== requestedVehicleType
-          ) continue;
-          if (!hasValidCoords(location)) continue;
 
           const dist = haversineDistanceKm(
             pickup.latitude,
@@ -424,6 +452,12 @@ function initRideSocket(io) {
 
     socket.on('disconnect', () => {
       driverLocationMap.delete(socket.id);
+      for (const [driverId, socketId] of driverSocketMap.entries()) {
+        if (socketId === socket.id) {
+          driverSocketMap.delete(driverId);
+          break;
+        }
+      }
 
       for (const [passengerId, socketId] of passengerSocketMap.entries()) {
         if (socketId === socket.id) {
