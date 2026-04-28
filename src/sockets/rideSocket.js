@@ -40,7 +40,7 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-const DRIVER_RADIUS_KM = 5;
+const DRIVER_RADIUS_KM = 1;
 const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
 
 function normalizeVehicleCategory(category) {
@@ -152,13 +152,26 @@ function initRideSocket(io) {
       }
     });
 
-    socket.on('get_available_drivers', ({ category }) => {
+    socket.on('get_available_drivers', ({ category, latitude, longitude }) => {
       const available = [];
       const requestedCategory = normalizeVehicleCategory(category);
       for (const location of driverLocationMap.values()) {
         if (!location.isOnline) continue;
         if (!requestedCategory || normalizeVehicleCategory(location.vehicleCategory) === requestedCategory) {
-          available.push(location);
+          const hasPassengerCoords = Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
+          if (hasPassengerCoords) {
+            const dist = haversineDistanceKm(
+              Number(latitude),
+              Number(longitude),
+              location.latitude,
+              location.longitude
+            );
+
+            if (dist > DRIVER_RADIUS_KM) continue;
+            available.push({ ...location, distanceKm: Number(dist.toFixed(2)) });
+          } else {
+            available.push(location);
+          }
         }
       }
       socket.emit('available_drivers', available);
