@@ -42,7 +42,7 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
 }
 
 const DRIVER_DISPLAY_RADIUS_KM = 1;
-const DRIVER_REQUEST_RADIUS_KM = 5;
+const DRIVER_REQUEST_RADIUS_KM = 25;
 const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
 const rideRecipientSocketMap = new Map();
 
@@ -51,6 +51,10 @@ function normalizeVehicleCategory(category) {
   if (value === 'TukTuk') return 'Tuk';
   if (value === 'Sedan') return 'Car';
   return value;
+}
+
+function hasValidCoords(location) {
+  return Number.isFinite(Number(location?.latitude)) && Number.isFinite(Number(location?.longitude));
 }
 
 function getRideErrorMessage(error) {
@@ -220,6 +224,7 @@ function initRideSocket(io) {
             requestedVehicleType &&
             normalizeVehicleCategory(location.vehicleCategory) !== requestedVehicleType
           ) continue;
+          if (!hasValidCoords(location)) continue;
 
           const dist = haversineDistanceKm(
             pickup.latitude,
@@ -242,8 +247,12 @@ function initRideSocket(io) {
           });
 
         if (nearbySocketIds.length === 0) {
+          const onlineCategories = Array.from(driverLocationMap.values())
+            .filter((location) => location.isOnline)
+            .map((location) => normalizeVehicleCategory(location.vehicleCategory) || 'Unknown');
+
           console.warn(
-            `[Socket.IO] No online ${requestedVehicleType} drivers found within ${DRIVER_REQUEST_RADIUS_KM} km for passengerId=${passengerId}`
+            `[Socket.IO] No online ${requestedVehicleType} drivers found within ${DRIVER_REQUEST_RADIUS_KM} km for passengerId=${passengerId}. Online categories: ${onlineCategories.join(', ') || 'none'}`
           );
           socket.emit('rideError', {
             code: 'NO_MATCHING_DRIVER',
