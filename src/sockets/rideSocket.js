@@ -42,6 +42,7 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
 
 const DRIVER_RADIUS_KM = 1;
 const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
+const rideRecipientSocketMap = new Map();
 
 function normalizeVehicleCategory(category) {
   const value = String(category || '').trim();
@@ -58,6 +59,20 @@ function getRideErrorMessage(error) {
   }
 
   return error?.message || 'Failed to create ride request. Please try again.';
+}
+
+function emitRemoveRideRequest(io, rideId, extra = {}) {
+  const recipientSocketIds = rideRecipientSocketMap.get(String(rideId));
+
+  if (recipientSocketIds?.size) {
+    for (const driverSocketId of recipientSocketIds) {
+      io.to(driverSocketId).emit('remove_ride_request', { rideId, ...extra });
+    }
+  } else {
+    io.emit('remove_ride_request', { rideId, ...extra });
+  }
+
+  rideRecipientSocketMap.delete(String(rideId));
 }
 
 function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
@@ -254,6 +269,8 @@ function initRideSocket(io) {
           io.to(driverSocketId).emit('incomingRide', rideData);
         }
 
+        rideRecipientSocketMap.set(rideData.rideId, new Set(nearbySocketIds));
+
         console.log(
           `[Socket.IO] incomingRide sent to ${nearbySocketIds.length} matching driver(s) for rideId=${rideData.rideId}`
         );
@@ -288,7 +305,7 @@ function initRideSocket(io) {
           return;
         }
 
-        socket.broadcast.emit('remove_ride_request', { rideId });
+        emitRemoveRideRequest(io, rideId, { reason: 'accepted', acceptedByDriverId: driverId });
 
         const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
         if (passengerSocketId) {
@@ -332,6 +349,7 @@ function initRideSocket(io) {
           canonicalStatus: 'CANCELLED',
         };
 
+        emitRemoveRideRequest(io, rideId, { reason: 'cancelled' });
         socket.emit('rideCancelled', payload);
         socket.emit('rideStatusUpdate', payload);
       } catch (error) {
