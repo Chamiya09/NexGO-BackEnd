@@ -41,7 +41,8 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-const DRIVER_RADIUS_KM = 1;
+const DRIVER_DISPLAY_RADIUS_KM = 1;
+const DRIVER_REQUEST_RADIUS_KM = 5;
 const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
 const rideRecipientSocketMap = new Map();
 
@@ -185,7 +186,7 @@ function initRideSocket(io) {
               location.longitude
             );
 
-            if (dist > DRIVER_RADIUS_KM) continue;
+            if (dist > DRIVER_DISPLAY_RADIUS_KM) continue;
             available.push({ ...location, distanceKm: Number(dist.toFixed(2)) });
           } else {
             available.push(location);
@@ -210,7 +211,7 @@ function initRideSocket(io) {
           return;
         }
 
-        const nearbySocketIds = [];
+        const matchingDrivers = [];
 
         for (const [driverSocketId, location] of driverLocationMap.entries()) {
           if (driverSocketId === socket.id) continue;
@@ -227,21 +228,26 @@ function initRideSocket(io) {
             location.longitude
           );
 
-          if (dist <= DRIVER_RADIUS_KM) {
-            nearbySocketIds.push(driverSocketId);
-            console.log(
-              `[Socket.IO] Driver ${location.driverId} is ${dist.toFixed(2)} km away - within range`
-            );
-          }
+          matchingDrivers.push({ driverSocketId, driverId: location.driverId, distanceKm: dist });
         }
+
+        const nearbySocketIds = matchingDrivers
+          .filter((driver) => driver.distanceKm <= DRIVER_REQUEST_RADIUS_KM)
+          .sort((a, b) => a.distanceKm - b.distanceKm)
+          .map((driver) => {
+            console.log(
+              `[Socket.IO] Driver ${driver.driverId} is ${driver.distanceKm.toFixed(2)} km away - within request range`
+            );
+            return driver.driverSocketId;
+          });
 
         if (nearbySocketIds.length === 0) {
           console.warn(
-            `[Socket.IO] No online nearby ${requestedVehicleType} drivers found for passengerId=${passengerId}`
+            `[Socket.IO] No online ${requestedVehicleType} drivers found within ${DRIVER_REQUEST_RADIUS_KM} km for passengerId=${passengerId}`
           );
           socket.emit('rideError', {
             code: 'NO_MATCHING_DRIVER',
-            message: `No online nearby ${requestedVehicleType} drivers found. Please try another category or try again later.`,
+            message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
           });
           return;
         }
