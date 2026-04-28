@@ -489,16 +489,24 @@ function initRideSocket(io) {
         }
 
         const code = createArrivalCode();
+        const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
         arrivalVerificationMap.set(String(rideId), {
           code,
           driverId: String(driverId),
-          expiresAt: Date.now() + 5 * 60 * 1000,
+          expiresAt: expiresAt.getTime(),
         });
+        ride.arrivalVerificationCode = code;
+        ride.arrivalVerificationExpiresAt = expiresAt;
+        await ride.save();
 
-        emitToPassenger(io, ride.passengerId, 'arrivalVerificationCode', {
+        const arrivalCodePayload = {
           rideId: ride._id.toString(),
+          passengerId: String(ride.passengerId),
           code,
-        });
+        };
+
+        emitToPassenger(io, ride.passengerId, 'arrivalVerificationCode', arrivalCodePayload);
+        io.emit('arrivalVerificationCodeBroadcast', arrivalCodePayload);
 
         socket.emit('arrivalCodeRequested', {
           rideId: ride._id.toString(),
@@ -534,6 +542,10 @@ function initRideSocket(io) {
         }
 
         arrivalVerificationMap.delete(String(rideId));
+        await Ride.findByIdAndUpdate(rideId, {
+          arrivalVerificationCode: null,
+          arrivalVerificationExpiresAt: null,
+        });
         await handleStrictTransition(io, socket, { rideId, driverId }, {
           nextCanonicalStatus: 'ARRIVED',
           passengerEvent: 'driver_arrived',

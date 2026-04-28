@@ -43,6 +43,8 @@ const rideSchema = new mongoose.Schema(
       enum: ['Pending', 'Accepted', 'Arrived', 'InProgress', 'Completed', 'Cancelled'],
       default: 'Pending',
     },
+    arrivalVerificationCode: { type: String, default: null },
+    arrivalVerificationExpiresAt: { type: Date, default: null },
     acceptedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
   },
