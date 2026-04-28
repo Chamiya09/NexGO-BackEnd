@@ -420,4 +420,4 @@ function initRideSocket(io) {
   });
 }
 
-module.exports = { initRideSocket };
+module.exports = { initRideSocket, emitRemoveRideRequest };

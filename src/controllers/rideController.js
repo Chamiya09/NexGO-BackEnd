@@ -3,6 +3,7 @@
 
 const jwt = require('jsonwebtoken');
 const Ride = require('../models/Ride');
+const { emitRemoveRideRequest } = require('../sockets/rideSocket');
 const {
   toCanonicalStatus,
   RIDE_STATUS,
@@ -168,6 +169,11 @@ const cancelRide = async (req, res) => {
     ride.status = 'Cancelled';
     ride.cancelledAt = new Date();
     await ride.save();
+
+    const io = req.app.get('io');
+    if (io) {
+      emitRemoveRideRequest(io, ride._id.toString(), { reason: 'cancelled' });
+    }
 
     return res.status(200).json({ ride: normalizeRide(ride) });
   } catch (error) {
