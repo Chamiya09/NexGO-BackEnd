@@ -12,7 +12,7 @@ const {
 // -- In-memory registries -------------------------------------------------------
 
 /**
- * Map: passengerId (string) -> socket.id
+ * Map: passengerId (string) -> Set<socket.id>
  * Used to emit ride lifecycle updates back to the specific passenger.
  */
 const passengerSocketMap = new Map();
@@ -115,14 +115,26 @@ function emitRemoveRideRequest(io, rideId, extra = {}) {
   rideRecipientSocketMap.delete(String(rideId));
 }
 
-function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
-  const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
+function getPassengerSocketIds(passengerId) {
+  return passengerSocketMap.get(String(passengerId)) ?? new Set();
+}
 
-  if (!passengerSocketId) {
-    console.warn(`[Socket.IO] Passenger socket not found for passengerId=${ride.passengerId}`);
-    return;
+function emitToPassenger(io, passengerId, eventName, payload) {
+  const passengerSocketIds = getPassengerSocketIds(passengerId);
+
+  if (passengerSocketIds.size === 0) {
+    console.warn(`[Socket.IO] Passenger socket not found for passengerId=${passengerId}`);
+    return false;
   }
 
+  for (const passengerSocketId of passengerSocketIds) {
+    io.to(passengerSocketId).emit(eventName, payload);
+  }
+
+  return true;
+}
+
+function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
   const payload = {
     rideId: ride._id.toString(),
     status: ride.status,
@@ -130,8 +142,8 @@ function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
     ...extra,
   };
 
-  io.to(passengerSocketId).emit(eventName, payload);
-  io.to(passengerSocketId).emit('rideStatusUpdate', payload);
+  emitToPassenger(io, ride.passengerId, eventName, payload);
+  emitToPassenger(io, ride.passengerId, 'rideStatusUpdate', payload);
 }
 
 async function handleStrictTransition(io, socket, payload, options) {
@@ -175,7 +187,10 @@ function initRideSocket(io) {
     console.log(`[Socket.IO] Client connected: ${socket.id}`);
 
     socket.on('registerPassenger', (passengerId) => {
-      passengerSocketMap.set(String(passengerId), socket.id);
+      const passengerKey = String(passengerId);
+      const passengerSocketIds = getPassengerSocketIds(passengerKey);
+      passengerSocketIds.add(socket.id);
+      passengerSocketMap.set(passengerKey, passengerSocketIds);
       console.log(
           `[Socket.IO] Passenger registered: userId=${passengerId} -> socketId=${socket.id}`
       );
@@ -377,33 +392,30 @@ function initRideSocket(io) {
 
         emitRemoveRideRequest(io, rideId, { reason: 'accepted', acceptedByDriverId: driverId });
 
-        const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
-        if (passengerSocketId) {
-          const driver = await Driver.findById(driverId).select('fullName phoneNumber vehicle').lean();
-          const driverLocation = getDriverLocationById(driverId);
-          const acceptanceData = {
-            rideId: ride._id.toString(),
-            driverId,
-            driverName: driver?.fullName || 'Driver',
-            driverPhoneNumber: driver?.phoneNumber || '',
-            driverVehicle: driver?.vehicle || null,
-            driverLocation: driverLocation
-              ? {
-                  latitude: driverLocation.latitude,
-                  longitude: driverLocation.longitude,
-                }
-              : null,
-            status: ride.status,
-            canonicalStatus: 'ACCEPTED',
-            acceptedAt: ride.acceptedAt,
-            pickup: ride.pickup,
-            dropoff: ride.dropoff,
-            vehicleType: ride.vehicleType,
-          };
+        const driver = await Driver.findById(driverId).select('fullName phoneNumber vehicle').lean();
+        const driverLocation = getDriverLocationById(driverId);
+        const acceptanceData = {
+          rideId: ride._id.toString(),
+          driverId,
+          driverName: driver?.fullName || 'Driver',
+          driverPhoneNumber: driver?.phoneNumber || '',
+          driverVehicle: driver?.vehicle || null,
+          driverLocation: driverLocation
+            ? {
+                latitude: driverLocation.latitude,
+                longitude: driverLocation.longitude,
+              }
+            : null,
+          status: ride.status,
+          canonicalStatus: 'ACCEPTED',
+          acceptedAt: ride.acceptedAt,
+          pickup: ride.pickup,
+          dropoff: ride.dropoff,
+          vehicleType: ride.vehicleType,
+        };
 
-          io.to(passengerSocketId).emit('rideAccepted', acceptanceData);
-          io.to(passengerSocketId).emit('rideStatusUpdate', acceptanceData);
-        }
+        emitToPassenger(io, ride.passengerId, 'rideAccepted', acceptanceData);
+        emitToPassenger(io, ride.passengerId, 'rideStatusUpdate', acceptanceData);
       } catch (error) {
         console.error('[Socket.IO] acceptRide error:', error.message);
         socket.emit('rideError', { message: 'Failed to accept ride. Please try again.' });
@@ -473,16 +485,14 @@ function initRideSocket(io) {
           expiresAt: Date.now() + 5 * 60 * 1000,
         });
 
-        const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
-        if (passengerSocketId) {
-          io.to(passengerSocketId).emit('arrivalVerificationCode', {
-            rideId: ride._id.toString(),
-            code,
-          });
-        }
+        emitToPassenger(io, ride.passengerId, 'arrivalVerificationCode', {
+          rideId: ride._id.toString(),
+          code,
+        });
 
         socket.emit('arrivalCodeRequested', {
           rideId: ride._id.toString(),
+          code,
           expiresInSeconds: 300,
         });
       } catch (error) {
@@ -568,9 +578,11 @@ function initRideSocket(io) {
         }
       }
 
-      for (const [passengerId, socketId] of passengerSocketMap.entries()) {
-        if (socketId === socket.id) {
-          passengerSocketMap.delete(passengerId);
+      for (const [passengerId, socketIds] of passengerSocketMap.entries()) {
+        if (socketIds.delete(socket.id)) {
+          if (socketIds.size === 0) {
+            passengerSocketMap.delete(passengerId);
+          }
           console.log(`[Socket.IO] Cleaned up passenger mapping for userId=${passengerId}`);
           break;
         }
