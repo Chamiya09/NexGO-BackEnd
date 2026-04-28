@@ -265,6 +265,8 @@ function initRideSocket(io) {
           canonicalStatus: 'PENDING',
         };
 
+        socket.emit('rideCreated', { rideId: rideData.rideId });
+
         for (const driverSocketId of nearbySocketIds) {
           io.to(driverSocketId).emit('incomingRide', rideData);
         }
@@ -274,8 +276,6 @@ function initRideSocket(io) {
         console.log(
           `[Socket.IO] incomingRide sent to ${nearbySocketIds.length} matching driver(s) for rideId=${rideData.rideId}`
         );
-
-        socket.emit('rideCreated', { rideId: rideData.rideId });
       } catch (error) {
         console.error('[Socket.IO] requestRide error:', error);
         socket.emit('rideError', {
