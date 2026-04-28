@@ -23,6 +23,7 @@ const passengerSocketMap = new Map();
  */
 const driverLocationMap = new Map();
 const driverSocketMap = new Map();
+const arrivalVerificationMap = new Map();
 
 // -- Haversine formula ---------------------------------------------------------
 
@@ -93,6 +94,10 @@ function getDriverLocationById(driverId) {
   }
 
   return null;
+}
+
+function createArrivalCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 function getRideErrorMessage(error) {
@@ -434,17 +439,88 @@ function initRideSocket(io) {
       }
     });
 
-    // Strict transitions: ACCEPTED -> ARRIVED
+    // Verification gate before ACCEPTED -> ARRIVED
     socket.on('driver_arrived', async (payload) => {
       console.log('[Socket.IO] driver_arrived received:', payload);
       try {
-        await handleStrictTransition(io, socket, payload, {
+        const { rideId, driverId } = payload || {};
+
+        if (!rideId || !driverId) {
+          socket.emit('rideError', { message: 'rideId and driverId are required.' });
+          return;
+        }
+
+        const ride = await Ride.findById(rideId);
+        if (!ride) {
+          socket.emit('rideError', { message: `Ride ${rideId} not found.` });
+          return;
+        }
+
+        if (String(ride.driverId || '') !== String(driverId)) {
+          socket.emit('rideError', { message: 'Driver is not assigned to this ride.' });
+          return;
+        }
+
+        if (toCanonicalStatus(ride.status) !== 'ACCEPTED') {
+          socket.emit('rideError', { message: 'Arrival can only be confirmed for an accepted ride.' });
+          return;
+        }
+
+        const code = createArrivalCode();
+        arrivalVerificationMap.set(String(rideId), {
+          code,
+          driverId: String(driverId),
+          expiresAt: Date.now() + 5 * 60 * 1000,
+        });
+
+        const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
+        if (passengerSocketId) {
+          io.to(passengerSocketId).emit('arrivalVerificationCode', {
+            rideId: ride._id.toString(),
+            code,
+          });
+        }
+
+        socket.emit('arrivalCodeRequested', {
+          rideId: ride._id.toString(),
+          expiresInSeconds: 300,
+        });
+      } catch (error) {
+        console.error('[Socket.IO] driver_arrived error:', error.message);
+        socket.emit('rideError', { message: 'Failed to request arrival code.' });
+      }
+    });
+
+    socket.on('confirm_arrival_code', async (payload) => {
+      console.log('[Socket.IO] confirm_arrival_code received:', { rideId: payload?.rideId, driverId: payload?.driverId });
+      try {
+        const { rideId, driverId, code } = payload || {};
+        const saved = arrivalVerificationMap.get(String(rideId));
+
+        if (!rideId || !driverId || !code) {
+          socket.emit('rideError', { code: 'INVALID_ARRIVAL_CODE', message: 'Please enter the passenger code.' });
+          return;
+        }
+
+        if (!saved || saved.driverId !== String(driverId) || saved.expiresAt < Date.now()) {
+          arrivalVerificationMap.delete(String(rideId));
+          socket.emit('rideError', { code: 'INVALID_ARRIVAL_CODE', message: 'Arrival code expired. Please request a new code.' });
+          return;
+        }
+
+        if (String(code).trim() !== saved.code) {
+          socket.emit('rideError', { code: 'INVALID_ARRIVAL_CODE', message: 'Incorrect passenger code.' });
+          return;
+        }
+
+        arrivalVerificationMap.delete(String(rideId));
+        await handleStrictTransition(io, socket, { rideId, driverId }, {
           nextCanonicalStatus: 'ARRIVED',
           passengerEvent: 'driver_arrived',
         });
       } catch (error) {
-        console.error('[Socket.IO] driver_arrived error:', error.message);
-        socket.emit('rideError', { message: 'Failed to mark ride as arrived.' });
+        console.error('[Socket.IO] confirm_arrival_code error:', error.message);
+        socket.emit('rideError', { message: 'Failed to confirm arrival code.' });
       }
     });
 
@@ -482,6 +558,9 @@ function initRideSocket(io) {
 
     socket.on('disconnect', () => {
       driverLocationMap.delete(socket.id);
+      arrivalVerificationMap.forEach((value, rideId) => {
+        if (value.expiresAt < Date.now()) arrivalVerificationMap.delete(rideId);
+      });
       for (const [driverId, socketId] of driverSocketMap.entries()) {
         if (socketId === socket.id) {
           driverSocketMap.delete(driverId);
