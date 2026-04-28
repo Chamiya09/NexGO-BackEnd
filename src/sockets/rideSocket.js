@@ -2,6 +2,7 @@
 // Handles all real-time ride events between passengers and drivers.
 
 const Ride = require('../models/Ride');
+const Driver = require('../models/Driver');
 const {
   RIDE_STATUS,
   toCanonicalStatus,
@@ -62,16 +63,7 @@ function getRideErrorMessage(error) {
 }
 
 function emitRemoveRideRequest(io, rideId, extra = {}) {
-  const recipientSocketIds = rideRecipientSocketMap.get(String(rideId));
-
-  if (recipientSocketIds?.size) {
-    for (const driverSocketId of recipientSocketIds) {
-      io.to(driverSocketId).emit('remove_ride_request', { rideId, ...extra });
-    }
-  } else {
-    io.emit('remove_ride_request', { rideId, ...extra });
-  }
-
+  io.emit('remove_ride_request', { rideId, ...extra });
   rideRecipientSocketMap.delete(String(rideId));
 }
 
@@ -141,12 +133,23 @@ function initRideSocket(io) {
       );
     });
 
-    socket.on('updateDriverLocation', ({ driverId, latitude, longitude, vehicleCategory, isOnline, heading }) => {
+    socket.on('updateDriverLocation', async ({ driverId, latitude, longitude, vehicleCategory, isOnline, heading }) => {
+      let nextVehicleCategory = normalizeVehicleCategory(vehicleCategory);
+
+      if (!nextVehicleCategory && driverId) {
+        try {
+          const driver = await Driver.findById(driverId).select('vehicle.category').lean();
+          nextVehicleCategory = normalizeVehicleCategory(driver?.vehicle?.category);
+        } catch (error) {
+          console.error('[Socket.IO] Unable to load driver vehicle category:', error.message);
+        }
+      }
+
       driverLocationMap.set(socket.id, {
         driverId,
         latitude,
         longitude,
-        vehicleCategory: normalizeVehicleCategory(vehicleCategory),
+        vehicleCategory: nextVehicleCategory,
         isOnline,
       });
       socket.broadcast.emit(`driver_location_${driverId}`, { latitude, longitude, heading });
