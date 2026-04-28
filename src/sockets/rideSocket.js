@@ -76,6 +76,25 @@ function getOnlineDriverLocations(category) {
   return Array.from(latestByDriverId.values());
 }
 
+function getDriverLocationById(driverId) {
+  const normalizedDriverId = String(driverId || '');
+  if (!normalizedDriverId) return null;
+
+  const driverSocketId = driverSocketMap.get(normalizedDriverId);
+  if (driverSocketId) {
+    const location = driverLocationMap.get(driverSocketId);
+    if (location && hasValidCoords(location)) return location;
+  }
+
+  for (const location of driverLocationMap.values()) {
+    if (String(location.driverId || '') === normalizedDriverId && hasValidCoords(location)) {
+      return location;
+    }
+  }
+
+  return null;
+}
+
 function getRideErrorMessage(error) {
   if (error?.name === 'ValidationError') {
     return Object.values(error.errors || {})
@@ -355,9 +374,20 @@ function initRideSocket(io) {
 
         const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
         if (passengerSocketId) {
+          const driver = await Driver.findById(driverId).select('fullName phoneNumber vehicle').lean();
+          const driverLocation = getDriverLocationById(driverId);
           const acceptanceData = {
             rideId: ride._id.toString(),
             driverId,
+            driverName: driver?.fullName || 'Driver',
+            driverPhoneNumber: driver?.phoneNumber || '',
+            driverVehicle: driver?.vehicle || null,
+            driverLocation: driverLocation
+              ? {
+                  latitude: driverLocation.latitude,
+                  longitude: driverLocation.longitude,
+                }
+              : null,
             status: ride.status,
             canonicalStatus: 'ACCEPTED',
             acceptedAt: ride.acceptedAt,
