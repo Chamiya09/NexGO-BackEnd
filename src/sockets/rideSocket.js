@@ -313,17 +313,15 @@ function initRideSocket(io) {
           matchingDrivers.push({ driverSocketId, driverId: location.driverId, distanceKm: dist });
         }
 
-        const nearbySocketIds = matchingDrivers
+        const nearbyDrivers = matchingDrivers
           .filter((driver) => driver.distanceKm <= DRIVER_REQUEST_RADIUS_KM)
           .sort((a, b) => a.distanceKm - b.distanceKm)
-          .map((driver) => {
-            console.log(
-              `[Socket.IO] Driver ${driver.driverId} is ${driver.distanceKm.toFixed(2)} km away - within request range`
-            );
-            return driver.driverSocketId;
+          .filter((driver) => {
+            const currentLocation = driverLocationMap.get(driver.driverSocketId);
+            return currentLocation?.isOnline && hasValidCoords(currentLocation);
           });
 
-        if (nearbySocketIds.length === 0) {
+        if (nearbyDrivers.length === 0) {
           const onlineCategories = Array.from(driverLocationMap.values())
             .filter((location) => location.isOnline)
             .map((location) => normalizeVehicleCategory(location.vehicleCategory) || 'Unknown');
@@ -360,16 +358,33 @@ function initRideSocket(io) {
           canonicalStatus: 'PENDING',
         };
 
-        socket.emit('rideCreated', { rideId: rideData.rideId });
+        const notifiedSocketIds = [];
+        for (const driver of nearbyDrivers) {
+          const currentLocation = driverLocationMap.get(driver.driverSocketId);
+          if (!currentLocation?.isOnline || !hasValidCoords(currentLocation)) continue;
 
-        for (const driverSocketId of nearbySocketIds) {
-          io.to(driverSocketId).emit('incomingRide', rideData);
+          console.log(
+            `[Socket.IO] Driver ${driver.driverId} is ${driver.distanceKm.toFixed(2)} km away - online and within request range`
+          );
+          io.to(driver.driverSocketId).emit('incomingRide', rideData);
+          notifiedSocketIds.push(driver.driverSocketId);
         }
 
-        rideRecipientSocketMap.set(rideData.rideId, new Set(nearbySocketIds));
+        if (notifiedSocketIds.length === 0) {
+          await Ride.findByIdAndDelete(ride._id);
+          socket.emit('rideError', {
+            code: 'NO_MATCHING_DRIVER',
+            message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
+          });
+          return;
+        }
+
+        socket.emit('rideCreated', { rideId: rideData.rideId });
+
+        rideRecipientSocketMap.set(rideData.rideId, new Set(notifiedSocketIds));
 
         console.log(
-          `[Socket.IO] incomingRide sent to ${nearbySocketIds.length} matching driver(s) for rideId=${rideData.rideId}`
+          `[Socket.IO] incomingRide sent to ${notifiedSocketIds.length} matching driver(s) for rideId=${rideData.rideId}`
         );
       } catch (error) {
         console.error('[Socket.IO] requestRide error:', error);
@@ -385,6 +400,14 @@ function initRideSocket(io) {
 
       try {
         const { rideId, driverId } = payload;
+        const currentDriverLocation = getDriverLocationById(driverId);
+        if (!currentDriverLocation?.isOnline) {
+          socket.emit('rideError', {
+            code: 'DRIVER_OFFLINE',
+            message: 'Go online before accepting ride requests.',
+          });
+          return;
+        }
 
         const ride = await Ride.findOneAndUpdate(
           { _id: rideId, status: RIDE_STATUS.PENDING },
