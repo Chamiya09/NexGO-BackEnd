@@ -41,8 +41,8 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-const DRIVER_DISPLAY_RADIUS_KM = 1;
-const DRIVER_REQUEST_RADIUS_KM = 25;
+const DRIVER_DISPLAY_RADIUS_KM = 2;
+const DRIVER_REQUEST_RADIUS_KM = 2;
 const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
 const rideRecipientSocketMap = new Map();
 
