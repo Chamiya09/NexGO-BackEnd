@@ -31,7 +31,7 @@ const rideSchema = new mongoose.Schema(
     },
     vehicleType: {
       type: String,
-      enum: ['Bike', 'TukTuk', 'Mini', 'Sedan', 'Van'],
+      enum: ['Bike', 'Tuk', 'TukTuk', 'Mini', 'Car', 'Sedan', 'Van'],
       required: true,
     },
     price: {

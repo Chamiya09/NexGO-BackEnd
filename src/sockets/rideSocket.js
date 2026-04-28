@@ -41,6 +41,24 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
 }
 
 const DRIVER_RADIUS_KM = 5;
+const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
+
+function normalizeVehicleCategory(category) {
+  const value = String(category || '').trim();
+  if (value === 'TukTuk') return 'Tuk';
+  if (value === 'Sedan') return 'Car';
+  return value;
+}
+
+function getRideErrorMessage(error) {
+  if (error?.name === 'ValidationError') {
+    return Object.values(error.errors || {})
+      .map((validationError) => validationError.message)
+      .join(', ') || error.message;
+  }
+
+  return error?.message || 'Failed to create ride request. Please try again.';
+}
 
 function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
   const passengerSocketId = passengerSocketMap.get(String(ride.passengerId));
@@ -109,7 +127,13 @@ function initRideSocket(io) {
     });
 
     socket.on('updateDriverLocation', ({ driverId, latitude, longitude, vehicleCategory, isOnline, heading }) => {
-      driverLocationMap.set(socket.id, { driverId, latitude, longitude, vehicleCategory, isOnline });
+      driverLocationMap.set(socket.id, {
+        driverId,
+        latitude,
+        longitude,
+        vehicleCategory: normalizeVehicleCategory(vehicleCategory),
+        isOnline,
+      });
       socket.broadcast.emit(`driver_location_${driverId}`, { latitude, longitude, heading });
     });
 
@@ -130,8 +154,10 @@ function initRideSocket(io) {
 
     socket.on('get_available_drivers', ({ category }) => {
       const available = [];
+      const requestedCategory = normalizeVehicleCategory(category);
       for (const location of driverLocationMap.values()) {
-        if (!category || location.vehicleCategory === category) {
+        if (!location.isOnline) continue;
+        if (!requestedCategory || normalizeVehicleCategory(location.vehicleCategory) === requestedCategory) {
           available.push(location);
         }
       }
@@ -143,34 +169,25 @@ function initRideSocket(io) {
 
       try {
         const { passengerId, passengerName, vehicleType, price, pickup, dropoff } = payload;
+        const requestedVehicleType = normalizeVehicleCategory(vehicleType);
 
-        const ride = await Ride.create({
-          passengerId,
-          vehicleType,
-          price,
-          pickup,
-          dropoff,
-          status: RIDE_STATUS.PENDING,
-        });
-
-        const rideData = {
-          rideId: ride._id.toString(),
-          passengerId,
-          passengerName: passengerName ?? 'Passenger',
-          vehicleType,
-          price,
-          pickup,
-          dropoff,
-          requestedAt: ride.createdAt,
-          status: ride.status,
-          canonicalStatus: 'PENDING',
-        };
+        if (!ALLOWED_VEHICLE_CATEGORIES.has(requestedVehicleType)) {
+          socket.emit('rideError', {
+            code: 'INVALID_VEHICLE_CATEGORY',
+            message: 'Please select a valid vehicle category.',
+          });
+          return;
+        }
 
         const nearbySocketIds = [];
 
         for (const [driverSocketId, location] of driverLocationMap.entries()) {
           if (driverSocketId === socket.id) continue;
           if (!location.isOnline) continue;
+          if (
+            requestedVehicleType &&
+            normalizeVehicleCategory(location.vehicleCategory) !== requestedVehicleType
+          ) continue;
 
           const dist = haversineDistanceKm(
             pickup.latitude,
@@ -189,23 +206,51 @@ function initRideSocket(io) {
 
         if (nearbySocketIds.length === 0) {
           console.warn(
-            '[Socket.IO] No nearby drivers found in location map - falling back to broadcast'
+            `[Socket.IO] No online nearby ${requestedVehicleType} drivers found for passengerId=${passengerId}`
           );
-          socket.broadcast.emit('incomingRide', rideData);
-        } else {
-          for (const driverSocketId of nearbySocketIds) {
-            io.to(driverSocketId).emit('incomingRide', rideData);
-          }
-          console.log(
-            `[Socket.IO] incomingRide sent to ${nearbySocketIds.length} nearby driver(s) for rideId=${rideData.rideId}`
-          );
+          socket.emit('rideError', {
+            code: 'NO_MATCHING_DRIVER',
+            message: `No online nearby ${requestedVehicleType} drivers found. Please try another category or try again later.`,
+          });
+          return;
         }
+
+        const ride = await Ride.create({
+          passengerId,
+          vehicleType: requestedVehicleType,
+          price,
+          pickup,
+          dropoff,
+          status: RIDE_STATUS.PENDING,
+        });
+
+        const rideData = {
+          rideId: ride._id.toString(),
+          passengerId,
+          passengerName: passengerName ?? 'Passenger',
+          vehicleType: requestedVehicleType,
+          price,
+          pickup,
+          dropoff,
+          requestedAt: ride.createdAt,
+          status: ride.status,
+          canonicalStatus: 'PENDING',
+        };
+
+        for (const driverSocketId of nearbySocketIds) {
+          io.to(driverSocketId).emit('incomingRide', rideData);
+        }
+
+        console.log(
+          `[Socket.IO] incomingRide sent to ${nearbySocketIds.length} matching driver(s) for rideId=${rideData.rideId}`
+        );
 
         socket.emit('rideCreated', { rideId: rideData.rideId });
       } catch (error) {
-        console.error('[Socket.IO] requestRide error:', error.message);
+        console.error('[Socket.IO] requestRide error:', error);
         socket.emit('rideError', {
-          message: 'Failed to create ride request. Please try again.',
+          code: 'CREATE_RIDE_FAILED',
+          message: getRideErrorMessage(error),
         });
       }
     });
