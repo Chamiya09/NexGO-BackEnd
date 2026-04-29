@@ -2,10 +2,17 @@ const express = require('express');
 const multer = require('multer');
 
 const { upload } = require('../middleware/uploadMiddleware');
+const { isCloudinaryConfigured } = require('../config/cloudinary');
 
 const router = express.Router();
 
 router.post('/', (req, res) => {
+  if (!isCloudinaryConfigured()) {
+    return res.status(503).json({
+      message: 'Cloudinary is not configured. Add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET to NexGO-BackEnd/.env.',
+    });
+  }
+
   upload.single('file')(req, res, (error) => {
     if (error instanceof multer.MulterError) {
       return res.status(400).json({ message: error.message });
