@@ -32,38 +32,9 @@ const promotionSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
-    maxDiscount: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    minFare: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    startDate: {
-      type: Date,
-      default: Date.now,
-    },
     endDate: {
       type: Date,
       default: null,
-    },
-    usageLimit: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    usedCount: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    audience: {
-      type: String,
-      default: 'All passengers',
-      trim: true,
     },
     status: {
       type: String,

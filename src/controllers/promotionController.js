@@ -25,13 +25,7 @@ const buildPromotionResponse = (promotion) => ({
   discountType: promotion.discountType,
   discountValue: String(promotion.discountValue),
   imageUrl: promotion.imageUrl || '',
-  maxDiscount: String(promotion.maxDiscount || 0),
-  minFare: String(promotion.minFare || 0),
-  startDate: promotion.startDate ? promotion.startDate.toISOString().slice(0, 10) : '',
   endDate: promotion.endDate ? promotion.endDate.toISOString().slice(0, 10) : 'No end date',
-  usageLimit: promotion.usageLimit ? String(promotion.usageLimit) : 'Unlimited',
-  usedCount: promotion.usedCount || 0,
-  audience: promotion.audience,
   status: promotion.status,
   active: promotion.active,
 });
@@ -55,12 +49,7 @@ const createPromotion = async (req, res) => {
       discountType = 'Percentage',
       discountValue,
       imageUrl = '',
-      maxDiscount,
-      minFare,
-      startDate,
       endDate,
-      usageLimit,
-      audience = 'All passengers',
       active = true,
       status,
     } = req.body;
@@ -88,12 +77,7 @@ const createPromotion = async (req, res) => {
       discountType: normalizedDiscountType,
       discountValue: numericDiscountValue,
       imageUrl: String(imageUrl || '').trim(),
-      maxDiscount: toNumber(maxDiscount, normalizedDiscountType === 'Fixed' ? numericDiscountValue : 500),
-      minFare: toNumber(minFare),
-      startDate: toDateOrNull(startDate) || new Date(),
       endDate: toDateOrNull(endDate),
-      usageLimit: toNumber(usageLimit),
-      audience: String(audience || 'All passengers').trim(),
       status: nextStatus,
       active: nextActive,
     });
@@ -120,12 +104,7 @@ const updatePromotion = async (req, res) => {
       discountType,
       discountValue,
       imageUrl,
-      maxDiscount,
-      minFare,
-      startDate,
       endDate,
-      usageLimit,
-      audience,
       active,
       status,
     } = req.body;
@@ -168,12 +147,7 @@ const updatePromotion = async (req, res) => {
     }
 
     if (imageUrl !== undefined) promotion.imageUrl = String(imageUrl || '').trim();
-    if (maxDiscount !== undefined) promotion.maxDiscount = toNumber(maxDiscount);
-    if (minFare !== undefined) promotion.minFare = toNumber(minFare);
-    if (startDate !== undefined) promotion.startDate = toDateOrNull(startDate) || new Date();
     if (endDate !== undefined) promotion.endDate = toDateOrNull(endDate);
-    if (usageLimit !== undefined) promotion.usageLimit = toNumber(usageLimit);
-    if (audience !== undefined) promotion.audience = String(audience || 'All passengers').trim();
     if (active !== undefined) promotion.active = Boolean(active);
     if (status !== undefined) {
       promotion.status = promotion.active ? (status === 'Scheduled' ? 'Scheduled' : 'Active') : 'Paused';
