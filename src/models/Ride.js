@@ -31,7 +31,7 @@ const rideSchema = new mongoose.Schema(
     },
     vehicleType: {
       type: String,
-      enum: ['Bike', 'TukTuk', 'Mini', 'Sedan', 'Van'],
+      enum: ['Bike', 'Tuk', 'TukTuk', 'Mini', 'Car', 'Sedan', 'Van'],
       required: true,
     },
     price: {
@@ -43,6 +43,8 @@ const rideSchema = new mongoose.Schema(
       enum: ['Pending', 'Accepted', 'Arrived', 'InProgress', 'Completed', 'Cancelled'],
       default: 'Pending',
     },
+    arrivalVerificationCode: { type: String, default: null },
+    arrivalVerificationExpiresAt: { type: Date, default: null },
     acceptedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
   },

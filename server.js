@@ -24,6 +24,7 @@ const io = new Server(httpServer, {
 
 // Register all ride socket events
 initRideSocket(io);
+app.set('io', io);
 
 // ── Express middleware ────────────────────────────────────────────────────────
 app.use(cors({ origin: '*' }));

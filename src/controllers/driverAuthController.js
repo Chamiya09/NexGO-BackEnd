@@ -11,6 +11,7 @@ const buildDriverResponse = (driver) => ({
   emergencyContact: driver.emergencyContact || '',
   profileImageUrl: driver.profileImageUrl || '',
   status: driver.status,
+  isOnline: Boolean(driver.isOnline),
   documents: driver.documents || [],
   vehicle: driver.vehicle || null,
   security: driver.security || {},

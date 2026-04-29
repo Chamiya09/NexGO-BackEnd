@@ -3,6 +3,7 @@
 
 const jwt = require('jsonwebtoken');
 const Ride = require('../models/Ride');
+const { emitRemoveRideRequest } = require('../sockets/rideSocket');
 const {
   toCanonicalStatus,
   RIDE_STATUS,
@@ -17,20 +18,45 @@ const getAuthenticatedUser = (req) => {
 };
 
 // ── Normalise a Ride doc for API responses ─────────────────────────────────────
-const normalizeRide = (ride) => ({
-  id: ride._id.toString(),
-  passengerId: ride.passengerId?.toString(),
-  driverId: ride.driverId?.toString() ?? null,
-  pickup: ride.pickup,
-  dropoff: ride.dropoff,
-  vehicleType: ride.vehicleType,
-  price: ride.price,
-  status: ride.status,
-  canonicalStatus: toCanonicalStatus(ride.status),
-  requestedAt: ride.createdAt,
-  acceptedAt: ride.acceptedAt ?? null,
-  completedAt: ride.completedAt ?? null,
-});
+const normalizeDriver = (driver) => {
+  if (!driver || typeof driver !== 'object') return null;
+
+  return {
+    id: driver._id?.toString?.() ?? driver.toString?.() ?? null,
+    fullName: driver.fullName ?? '',
+    phoneNumber: driver.phoneNumber ?? '',
+    profileImageUrl: driver.profileImageUrl ?? '',
+    vehicle: driver.vehicle
+      ? {
+          make: driver.vehicle.make ?? '',
+          model: driver.vehicle.model ?? '',
+          plateNumber: driver.vehicle.plateNumber ?? '',
+          color: driver.vehicle.color ?? '',
+          category: driver.vehicle.category ?? '',
+        }
+      : null,
+  };
+};
+
+const normalizeRide = (ride) => {
+  const driver = normalizeDriver(ride.driverId);
+
+  return {
+    id: ride._id.toString(),
+    passengerId: ride.passengerId?.toString(),
+    driverId: driver?.id ?? ride.driverId?.toString?.() ?? null,
+    driver,
+    pickup: ride.pickup,
+    dropoff: ride.dropoff,
+    vehicleType: ride.vehicleType,
+    price: ride.price,
+    status: ride.status,
+    canonicalStatus: toCanonicalStatus(ride.status),
+    requestedAt: ride.createdAt,
+    acceptedAt: ride.acceptedAt ?? null,
+    completedAt: ride.completedAt ?? null,
+  };
+};
 
 // ── GET /api/rides/my-rides ───────────────────────────────────────────────────
 // Returns the authenticated passenger's rides, newest first.
@@ -42,6 +68,7 @@ const getMyRides = async (req, res) => {
     }
 
     const rides = await Ride.find({ passengerId: decoded.id })
+      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
@@ -68,6 +95,7 @@ const getDriverRides = async (req, res) => {
     }
 
     const rides = await Ride.find({ driverId: decoded.id })
+      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
@@ -96,7 +124,9 @@ const getRideById = async (req, res) => {
     const ride = await Ride.findOne({
       _id: req.params.id,
       passengerId: decoded.id,
-    }).lean();
+    })
+      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
+      .lean();
 
     if (!ride) {
       return res.status(404).json({ message: 'Ride not found' });
@@ -114,6 +144,41 @@ const getRideById = async (req, res) => {
 
 // ── PATCH /api/rides/:id/cancel ───────────────────────────────────
 // Passenger cancels their own Pending or Accepted ride.
+const getArrivalCode = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const ride = await Ride.findOne({
+      _id: req.params.id,
+      passengerId: decoded.id,
+    }).select('arrivalVerificationCode arrivalVerificationExpiresAt status');
+
+    if (!ride) {
+      return res.status(404).json({ message: 'Ride not found' });
+    }
+
+    const expiresAt = ride.arrivalVerificationExpiresAt?.getTime?.() ?? 0;
+    if (!ride.arrivalVerificationCode || expiresAt <= Date.now()) {
+      return res.status(200).json({ code: null });
+    }
+
+    return res.status(200).json({
+      code: ride.arrivalVerificationCode,
+      expiresAt: ride.arrivalVerificationExpiresAt,
+      status: ride.status,
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] getArrivalCode error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to fetch arrival code' });
+  }
+};
+
 const cancelRide = async (req, res) => {
   try {
     const decoded = getAuthenticatedUser(req);
@@ -140,6 +205,11 @@ const cancelRide = async (req, res) => {
     ride.cancelledAt = new Date();
     await ride.save();
 
+    const io = req.app.get('io');
+    if (io) {
+      emitRemoveRideRequest(io, ride._id.toString(), { reason: 'cancelled' });
+    }
+
     return res.status(200).json({ ride: normalizeRide(ride) });
   } catch (error) {
     if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
@@ -150,4 +220,4 @@ const cancelRide = async (req, res) => {
   }
 };
 
-module.exports = { getMyRides, getDriverRides, getRideById, cancelRide };
+module.exports = { getMyRides, getDriverRides, getRideById, getArrivalCode, cancelRide };
