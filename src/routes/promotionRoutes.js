@@ -11,6 +11,8 @@ const router = express.Router();
 
 router.get('/', listPromotions);
 router.post('/', createPromotion);
+router.post('/:id', updatePromotion);
+router.post('/:id/delete', deletePromotion);
 router.patch('/:id', updatePromotion);
 router.delete('/:id', deletePromotion);
 

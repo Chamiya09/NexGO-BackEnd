@@ -18,13 +18,22 @@ const toDateOrNull = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const getPromotionImageUrl = (promotion) =>
+  promotion.imageUrl ||
+  promotion.get?.('image') ||
+  promotion.get?.('imageURL') ||
+  promotion.get?.('fileUrl') ||
+  promotion.get?.('secureUrl') ||
+  promotion.get?.('url') ||
+  '';
+
 const buildPromotionResponse = (promotion) => ({
   id: promotion._id.toString(),
   name: promotion.name,
   code: promotion.code,
   discountType: promotion.discountType,
   discountValue: String(promotion.discountValue),
-  imageUrl: promotion.imageUrl || '',
+  imageUrl: getPromotionImageUrl(promotion),
   endDate: promotion.endDate ? promotion.endDate.toISOString().slice(0, 10) : 'No end date',
   status: promotion.status,
   active: promotion.active,
