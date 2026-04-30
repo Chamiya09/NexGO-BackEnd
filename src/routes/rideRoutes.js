@@ -48,6 +48,9 @@ router.patch('/:id/review', submitRideReview);
 // DELETE /api/rides/:id/review - passenger removes their ride review
 router.delete('/:id/review', deleteRideReview);
 
+// POST /api/rides/:id/review/delete - compatibility fallback for clients/proxies that fail DELETE
+router.post('/:id/review/delete', deleteRideReview);
+
 // GET /api/rides/:id - single ride detail (keep last to avoid swallowing /my-rides)
 router.get('/:id', getRideById);
 
