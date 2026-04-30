@@ -311,6 +311,39 @@ const submitRideReview = async (req, res) => {
   }
 };
 
+const deleteRideReview = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const ride = await Ride.findOne({
+      _id: req.params.id,
+      passengerId: decoded.id,
+    }).populate('driverId', 'fullName phoneNumber profileImageUrl vehicle');
+
+    if (!ride) {
+      return res.status(404).json({ message: 'Ride not found' });
+    }
+
+    ride.review = null;
+    await ride.save();
+
+    return res.status(200).json({
+      ride: normalizeRide(ride),
+      review: null,
+      message: 'Review deleted',
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] deleteRideReview error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to delete review' });
+  }
+};
+
 const normalizeAdminReview = (ride) => {
   const review = normalizeReview(ride.review, ride._id);
   if (!review) return null;
@@ -406,6 +439,7 @@ module.exports = {
   getArrivalCode,
   cancelRide,
   submitRideReview,
+  deleteRideReview,
   listRideReviewsForAdmin,
   moderateRideReview,
 };

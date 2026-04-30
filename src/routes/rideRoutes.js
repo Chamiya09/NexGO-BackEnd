@@ -7,6 +7,7 @@ const {
   getArrivalCode,
   cancelRide,
   submitRideReview,
+  deleteRideReview,
   listRideReviewsForAdmin,
   moderateRideReview,
 } = require('../controllers/rideController');
@@ -43,6 +44,9 @@ router.get('/:id/arrival-code', getArrivalCode);
 
 // PATCH /api/rides/:id/review - passenger adds or updates a completed ride review
 router.patch('/:id/review', submitRideReview);
+
+// DELETE /api/rides/:id/review - passenger removes their ride review
+router.delete('/:id/review', deleteRideReview);
 
 // GET /api/rides/:id - single ride detail (keep last to avoid swallowing /my-rides)
 router.get('/:id', getRideById);
