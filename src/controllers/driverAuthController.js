@@ -206,6 +206,7 @@ const buildPublicDriverProfilePayload = async (driverId) => {
       $match: {
         driverId: driver._id,
         status: { $in: completedStatusMatch },
+        'review.status': 'approved',
       },
     },
     {
@@ -226,6 +227,7 @@ const buildPublicDriverProfilePayload = async (driverId) => {
     driverId: driver._id,
     status: { $in: completedStatusMatch },
     'review.rating': { $exists: true, $ne: null },
+    'review.status': 'approved',
   })
     .sort({ 'review.rating': -1, 'review.reviewedAt': -1 })
     .limit(3)

@@ -23,7 +23,20 @@ const reviewSchema = new mongoose.Schema(
       maxlength: [220, 'Review comment must be 220 characters or less'],
       default: '',
     },
+    status: {
+      type: String,
+      enum: ['review', 'approved', 'rejected'],
+      default: 'review',
+    },
+    submittedAt: {
+      type: Date,
+      default: null,
+    },
     reviewedAt: {
+      type: Date,
+      default: null,
+    },
+    moderatedAt: {
       type: Date,
       default: null,
     },

@@ -45,7 +45,10 @@ const normalizeReview = (review, rideId) => {
     rideId: rideId?.toString?.() ?? '',
     rating: review.rating,
     comment: review.comment ?? '',
+    status: review.status ?? 'review',
+    submittedAt: review.submittedAt ?? review.reviewedAt ?? null,
     reviewedAt: review.reviewedAt ?? null,
+    moderatedAt: review.moderatedAt ?? null,
     updatedAt: review.reviewedAt ?? null,
   };
 };
@@ -287,7 +290,10 @@ const submitRideReview = async (req, res) => {
     ride.review = {
       rating,
       comment,
+      status: 'review',
+      submittedAt: new Date(),
       reviewedAt: new Date(),
+      moderatedAt: null,
     };
 
     await ride.save();
@@ -305,6 +311,94 @@ const submitRideReview = async (req, res) => {
   }
 };
 
+const normalizeAdminReview = (ride) => {
+  const review = normalizeReview(ride.review, ride._id);
+  if (!review) return null;
+
+  return {
+    ...review,
+    rideId: ride._id.toString(),
+    rideStatus: ride.status,
+    vehicleType: ride.vehicleType,
+    price: ride.price,
+    requestedAt: ride.createdAt,
+    completedAt: ride.completedAt ?? null,
+    passenger: ride.passengerId
+      ? {
+          id: ride.passengerId._id?.toString?.() ?? ride.passengerId.toString?.() ?? '',
+          fullName: ride.passengerId.fullName ?? 'Passenger',
+          email: ride.passengerId.email ?? '',
+          phoneNumber: ride.passengerId.phoneNumber ?? '',
+        }
+      : null,
+    driver: normalizeDriver(ride.driverId),
+  };
+};
+
+const listRideReviewsForAdmin = async (req, res) => {
+  try {
+    const status = String(req.query.status || 'review').toLowerCase();
+    const allowedStatuses = ['all', 'review', 'approved', 'rejected'];
+    const reviewStatus = allowedStatuses.includes(status) ? status : 'review';
+
+    const query = {
+      'review.rating': { $exists: true, $ne: null },
+    };
+
+    if (reviewStatus === 'review') {
+      query.$or = [
+        { 'review.status': 'review' },
+        { 'review.status': { $exists: false } },
+        { 'review.status': null },
+      ];
+    } else if (reviewStatus !== 'all') {
+      query['review.status'] = reviewStatus;
+    }
+
+    const rides = await Ride.find(query)
+      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
+      .populate('passengerId', 'fullName email phoneNumber')
+      .sort({ 'review.submittedAt': -1, 'review.reviewedAt': -1, createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    return res.status(200).json({
+      reviews: rides.map(normalizeAdminReview).filter(Boolean),
+    });
+  } catch (error) {
+    console.error('[rideController] listRideReviewsForAdmin error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to load ride reviews' });
+  }
+};
+
+const moderateRideReview = async (req, res) => {
+  try {
+    const status = String(req.body?.status || '').toLowerCase();
+    if (!['approved', 'rejected', 'review'].includes(status)) {
+      return res.status(400).json({ message: 'status must be approved, rejected, or review' });
+    }
+
+    const ride = await Ride.findById(req.params.id)
+      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
+      .populate('passengerId', 'fullName email phoneNumber');
+
+    if (!ride?.review?.rating) {
+      return res.status(404).json({ message: 'Review not found' });
+    }
+
+    ride.review.status = status;
+    ride.review.moderatedAt = new Date();
+    await ride.save();
+
+    return res.status(200).json({
+      review: normalizeAdminReview(ride),
+    });
+  } catch (error) {
+    console.error('[rideController] moderateRideReview error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to update review status' });
+  }
+};
+
 module.exports = {
   getMyRides,
   getDriverRides,
@@ -312,4 +406,6 @@ module.exports = {
   getArrivalCode,
   cancelRide,
   submitRideReview,
+  listRideReviewsForAdmin,
+  moderateRideReview,
 };

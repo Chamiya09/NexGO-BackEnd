@@ -7,6 +7,8 @@ const {
   getArrivalCode,
   cancelRide,
   submitRideReview,
+  listRideReviewsForAdmin,
+  moderateRideReview,
 } = require('../controllers/rideController');
 const {
   getPublicDriverProfile,
@@ -20,6 +22,12 @@ router.get('/my-rides', getMyRides);
 
 // GET /api/rides/driver-rides - driver's assigned rides
 router.get('/driver-rides', getDriverRides);
+
+// GET /api/rides/admin/reviews - admin review and rating moderation queue
+router.get('/admin/reviews', listRideReviewsForAdmin);
+
+// PATCH /api/rides/admin/reviews/:id - admin approves, rejects, or reopens a ride review
+router.patch('/admin/reviews/:id', moderateRideReview);
 
 // GET /api/rides/drivers/:id/public-profile - public passenger view of driver profile
 router.get('/drivers/:id/public-profile', getPublicDriverProfile);
