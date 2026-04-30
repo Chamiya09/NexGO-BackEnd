@@ -200,8 +200,14 @@ const buildPublicDriverProfilePayload = async (driverId) => {
     throw error;
   }
 
+  const completedStatusMatch = ['Completed', 'completed'];
   const [statsResult] = await Ride.aggregate([
-    { $match: { driverId: driver._id, status: 'Completed' } },
+    {
+      $match: {
+        driverId: driver._id,
+        status: { $in: completedStatusMatch },
+      },
+    },
     {
       $group: {
         _id: '$driverId',
@@ -218,7 +224,7 @@ const buildPublicDriverProfilePayload = async (driverId) => {
 
   const topReviewedRides = await Ride.find({
     driverId: driver._id,
-    status: 'Completed',
+    status: { $in: completedStatusMatch },
     'review.rating': { $exists: true, $ne: null },
   })
     .sort({ 'review.rating': -1, 'review.reviewedAt': -1 })
