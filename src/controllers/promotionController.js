@@ -1,4 +1,6 @@
+const jwt = require('jsonwebtoken');
 const Promotion = require('../models/Promotion');
+const Ride = require('../models/Ride');
 
 const toNumber = (value, fallback = 0) => {
   if (value === 'Unlimited') {
@@ -39,6 +41,13 @@ const buildPromotionResponse = (promotion) => ({
   active: promotion.active,
 });
 
+const getAuthenticatedUser = (req) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.split(' ')[1];
+  return jwt.verify(token, process.env.JWT_SECRET);
+};
+
 const listPromotions = async (_req, res) => {
   try {
     const promotions = await Promotion.find().sort({ createdAt: -1 });
@@ -47,6 +56,49 @@ const listPromotions = async (_req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Unable to load promotions' });
+  }
+};
+
+const validatePromotion = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const normalizedCode = String(req.params.code || '').trim().toUpperCase();
+    if (!normalizedCode) {
+      return res.status(400).json({ message: 'Promo code is required.' });
+    }
+
+    const promotion = await Promotion.findOne({ code: normalizedCode });
+    if (!promotion) {
+      return res.status(404).json({ message: 'Promo code not found.' });
+    }
+
+    if (!promotion.active || promotion.status !== 'Active') {
+      return res.status(400).json({ message: 'Promo code is not active.' });
+    }
+
+    if (promotion.endDate && promotion.endDate.getTime() < Date.now()) {
+      return res.status(400).json({ message: 'Promo code has expired.' });
+    }
+
+    const alreadyUsed = await Ride.exists({
+      passengerId: decoded.id,
+      'promotion.promotionId': promotion._id,
+    });
+
+    if (alreadyUsed) {
+      return res.status(409).json({ message: 'You have already used this promo code.' });
+    }
+
+    return res.status(200).json({ promotion: buildPromotionResponse(promotion) });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    return res.status(500).json({ message: error.message || 'Unable to validate promotion' });
   }
 };
 
@@ -193,6 +245,7 @@ const deletePromotion = async (req, res) => {
 
 module.exports = {
   listPromotions,
+  validatePromotion,
   createPromotion,
   updatePromotion,
   deletePromotion,

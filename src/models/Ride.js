@@ -38,6 +38,36 @@ const rideSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    promotion: {
+      promotionId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Promotion',
+        default: null,
+      },
+      code: {
+        type: String,
+        uppercase: true,
+        trim: true,
+        default: '',
+      },
+      discountType: {
+        type: String,
+        enum: ['Percentage', 'Fixed', null],
+        default: null,
+      },
+      discountValue: {
+        type: Number,
+        default: 0,
+      },
+      discountAmount: {
+        type: Number,
+        default: 0,
+      },
+      originalPrice: {
+        type: Number,
+        default: 0,
+      },
+    },
     status: {
       type: String,
       enum: ['Pending', 'Accepted', 'Arrived', 'InProgress', 'Completed', 'Cancelled'],
