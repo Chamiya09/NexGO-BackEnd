@@ -8,6 +8,10 @@ const {
   cancelRide,
   submitRideReview,
 } = require('../controllers/rideController');
+const {
+  getPublicDriverProfile,
+  getRidePublicDriverProfile,
+} = require('../controllers/driverAuthController');
 
 const router = express.Router();
 
@@ -16,6 +20,12 @@ router.get('/my-rides', getMyRides);
 
 // GET /api/rides/driver-rides - driver's assigned rides
 router.get('/driver-rides', getDriverRides);
+
+// GET /api/rides/drivers/:id/public-profile - public passenger view of driver profile
+router.get('/drivers/:id/public-profile', getPublicDriverProfile);
+
+// GET /api/rides/:id/driver-public-profile - public passenger view using the ride's assigned driver
+router.get('/:id/driver-public-profile', getRidePublicDriverProfile);
 
 // PATCH /api/rides/:id/cancel - passenger cancels their ride
 router.patch('/:id/cancel', cancelRide);

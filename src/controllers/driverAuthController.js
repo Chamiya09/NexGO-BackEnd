@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 
 const Driver = require('../models/Driver');
 const Ride = require('../models/Ride');
@@ -63,15 +64,6 @@ const getAuthenticatedDriver = async (req) => {
   }
 
   return Driver.findById(decoded.id);
-};
-
-const getAuthenticatedUserPayload = (req) => {
-  const token = getTokenFromRequest(req);
-  if (!token) {
-    return null;
-  }
-
-  return jwt.verify(token, process.env.JWT_SECRET);
 };
 
 const normalizeEmail = (email = '') => String(email).trim().toLowerCase();
@@ -194,66 +186,92 @@ const listDrivers = async (_req, res) => {
   }
 };
 
+const buildPublicDriverProfilePayload = async (driverId) => {
+  if (!mongoose.Types.ObjectId.isValid(driverId)) {
+    const error = new Error('Invalid driver profile id');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const driver = await Driver.findById(driverId);
+  if (!driver) {
+    const error = new Error('Driver not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const [statsResult] = await Ride.aggregate([
+    { $match: { driverId: driver._id, status: 'Completed' } },
+    {
+      $group: {
+        _id: '$driverId',
+        completedRides: { $sum: 1 },
+        ratingCount: {
+          $sum: {
+            $cond: [{ $ifNull: ['$review.rating', false] }, 1, 0],
+          },
+        },
+        ratingAverage: { $avg: '$review.rating' },
+      },
+    },
+  ]);
+
+  const topReviewedRides = await Ride.find({
+    driverId: driver._id,
+    status: 'Completed',
+    'review.rating': { $exists: true, $ne: null },
+  })
+    .sort({ 'review.rating': -1, 'review.reviewedAt': -1 })
+    .limit(3)
+    .select('review completedAt')
+    .lean();
+
+  const stats = {
+    completedRides: statsResult?.completedRides ?? 0,
+    ratingCount: statsResult?.ratingCount ?? 0,
+    ratingAverage: statsResult?.ratingAverage
+      ? Number(statsResult.ratingAverage.toFixed(1))
+      : 0,
+    recentReviews: topReviewedRides.map((ride) => ({
+      rating: ride.review?.rating ?? 0,
+      comment: ride.review?.comment ?? '',
+      reviewedAt: ride.review?.reviewedAt ?? ride.completedAt ?? null,
+    })),
+  };
+
+  return buildPublicDriverResponse(driver, stats);
+};
+
 const getPublicDriverProfile = async (req, res) => {
   try {
-    const decoded = getAuthenticatedUserPayload(req);
-    if (!decoded?.id) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
+    const driver = await buildPublicDriverProfilePayload(req.params.id);
 
-    const driver = await Driver.findById(req.params.id);
-    if (!driver) {
-      return res.status(404).json({ message: 'Driver not found' });
-    }
-
-    const [statsResult] = await Ride.aggregate([
-      { $match: { driverId: driver._id, status: 'Completed' } },
-      {
-        $group: {
-          _id: '$driverId',
-          completedRides: { $sum: 1 },
-          ratingCount: {
-            $sum: {
-              $cond: [{ $ifNull: ['$review.rating', false] }, 1, 0],
-            },
-          },
-          ratingAverage: { $avg: '$review.rating' },
-        },
-      },
-    ]);
-
-    const topReviewedRides = await Ride.find({
-      driverId: driver._id,
-      status: 'Completed',
-      'review.rating': { $exists: true, $ne: null },
-    })
-      .sort({ 'review.rating': -1, 'review.reviewedAt': -1 })
-      .limit(3)
-      .select('review completedAt')
-      .lean();
-
-    const stats = {
-      completedRides: statsResult?.completedRides ?? 0,
-      ratingCount: statsResult?.ratingCount ?? 0,
-      ratingAverage: statsResult?.ratingAverage
-        ? Number(statsResult.ratingAverage.toFixed(1))
-        : 0,
-      recentReviews: topReviewedRides.map((ride) => ({
-        rating: ride.review?.rating ?? 0,
-        comment: ride.review?.comment ?? '',
-        reviewedAt: ride.review?.reviewedAt ?? ride.completedAt ?? null,
-      })),
-    };
-
-    return res.status(200).json({
-      driver: buildPublicDriverResponse(driver, stats),
-    });
+    return res.status(200).json({ driver });
   } catch (error) {
-    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Invalid or expired token' });
+    return res.status(error.statusCode || 500).json({
+      message: error.message || 'Unable to load driver profile',
+    });
+  }
+};
+
+const getRidePublicDriverProfile = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid ride id' });
     }
 
-    return res.status(500).json({ message: error.message || 'Unable to load driver profile' });
+    const ride = await Ride.findById(req.params.id).select('driverId');
+    if (!ride?.driverId) {
+      return res.status(404).json({ message: 'Driver profile not available for this ride' });
+    }
+
+    const driver = await buildPublicDriverProfilePayload(ride.driverId);
+
+    return res.status(200).json({ driver });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      message: error.message || 'Unable to load driver profile',
+    });
   }
 };
 
@@ -604,6 +622,7 @@ module.exports = {
   loginDriver,
   getDriverMe,
   getPublicDriverProfile,
+  getRidePublicDriverProfile,
   listDrivers,
   updateDriverMe,
   updateDriverDocument,
