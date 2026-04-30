@@ -38,6 +38,18 @@ const normalizeDriver = (driver) => {
   };
 };
 
+const normalizePassenger = (passenger) => {
+  if (!passenger || typeof passenger !== 'object') return null;
+
+  return {
+    id: passenger._id?.toString?.() ?? passenger.toString?.() ?? null,
+    fullName: passenger.fullName ?? '',
+    email: passenger.email ?? '',
+    phoneNumber: passenger.phoneNumber ?? '',
+    profileImageUrl: passenger.profileImageUrl ?? '',
+  };
+};
+
 const normalizeReview = (review, rideId) => {
   if (!review || !review.rating) return null;
 
@@ -55,10 +67,12 @@ const normalizeReview = (review, rideId) => {
 
 const normalizeRide = (ride) => {
   const driver = normalizeDriver(ride.driverId);
+  const passenger = normalizePassenger(ride.passengerId);
 
   return {
     id: ride._id.toString(),
-    passengerId: ride.passengerId?.toString(),
+    passengerId: passenger?.id ?? ride.passengerId?.toString?.(),
+    passenger,
     driverId: driver?.id ?? ride.driverId?.toString?.() ?? null,
     driver,
     pickup: ride.pickup,
@@ -134,6 +148,7 @@ const getDriverRides = async (req, res) => {
 
     const rides = await Ride.find({ driverId: decoded.id })
       .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
+      .populate('passengerId', 'fullName email phoneNumber profileImageUrl')
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
