@@ -287,6 +287,10 @@ const submitRideReview = async (req, res) => {
       return res.status(400).json({ message: 'Only completed rides can be reviewed' });
     }
 
+    if (ride.review?.status === 'rejected') {
+      return res.status(403).json({ message: 'Rejected reviews cannot be edited' });
+    }
+
     ride.review = {
       rating,
       comment,
