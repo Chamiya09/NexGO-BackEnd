@@ -38,6 +38,18 @@ const normalizeDriver = (driver) => {
   };
 };
 
+const normalizeReview = (review, rideId) => {
+  if (!review || !review.rating) return null;
+
+  return {
+    rideId: rideId?.toString?.() ?? '',
+    rating: review.rating,
+    comment: review.comment ?? '',
+    reviewedAt: review.reviewedAt ?? null,
+    updatedAt: review.reviewedAt ?? null,
+  };
+};
+
 const normalizeRide = (ride) => {
   const driver = normalizeDriver(ride.driverId);
 
@@ -65,7 +77,20 @@ const normalizeRide = (ride) => {
     requestedAt: ride.createdAt,
     acceptedAt: ride.acceptedAt ?? null,
     completedAt: ride.completedAt ?? null,
+    review: normalizeReview(ride.review, ride._id),
   };
+};
+
+const normalizeRating = (value) => {
+  const numericRating = Number(value);
+  if (!Number.isFinite(numericRating)) return null;
+
+  return Math.round(numericRating);
+};
+
+const normalizeComment = (value) => {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, 220);
 };
 
 // ── GET /api/rides/my-rides ───────────────────────────────────────────────────
@@ -230,4 +255,61 @@ const cancelRide = async (req, res) => {
   }
 };
 
-module.exports = { getMyRides, getDriverRides, getRideById, getArrivalCode, cancelRide };
+// ── PATCH /api/rides/:id/review ──────────────────────────────────────────────
+// Passenger adds or updates their review for a completed ride.
+const submitRideReview = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const rating = normalizeRating(req.body?.rating);
+    const comment = normalizeComment(req.body?.comment);
+
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ message: 'Rating must be a number from 1 to 5' });
+    }
+
+    const ride = await Ride.findOne({
+      _id: req.params.id,
+      passengerId: decoded.id,
+    }).populate('driverId', 'fullName phoneNumber profileImageUrl vehicle');
+
+    if (!ride) {
+      return res.status(404).json({ message: 'Ride not found' });
+    }
+
+    if (toCanonicalStatus(ride.status) !== 'COMPLETED') {
+      return res.status(400).json({ message: 'Only completed rides can be reviewed' });
+    }
+
+    ride.review = {
+      rating,
+      comment,
+      reviewedAt: new Date(),
+    };
+
+    await ride.save();
+
+    return res.status(200).json({
+      ride: normalizeRide(ride),
+      review: normalizeReview(ride.review, ride._id),
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] submitRideReview error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to submit review' });
+  }
+};
+
+module.exports = {
+  getMyRides,
+  getDriverRides,
+  getRideById,
+  getArrivalCode,
+  cancelRide,
+  submitRideReview,
+};
