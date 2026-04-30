@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const Driver = require('../models/Driver');
+const Ride = require('../models/Ride');
 
 const buildDriverResponse = (driver) => ({
   id: driver._id,
@@ -15,6 +16,20 @@ const buildDriverResponse = (driver) => ({
   documents: driver.documents || [],
   vehicle: driver.vehicle || null,
   security: driver.security || {},
+});
+
+const buildPublicDriverResponse = (driver, stats = {}) => ({
+  id: driver._id,
+  fullName: driver.fullName,
+  phoneNumber: driver.phoneNumber,
+  profileImageUrl: driver.profileImageUrl || '',
+  status: driver.status,
+  isOnline: Boolean(driver.isOnline),
+  vehicle: driver.vehicle || null,
+  ratingAverage: stats.ratingAverage ?? 0,
+  ratingCount: stats.ratingCount ?? 0,
+  completedRides: stats.completedRides ?? 0,
+  recentReviews: stats.recentReviews ?? [],
 });
 
 const getTokenFromRequest = (req) => {
@@ -48,6 +63,15 @@ const getAuthenticatedDriver = async (req) => {
   }
 
   return Driver.findById(decoded.id);
+};
+
+const getAuthenticatedUserPayload = (req) => {
+  const token = getTokenFromRequest(req);
+  if (!token) {
+    return null;
+  }
+
+  return jwt.verify(token, process.env.JWT_SECRET);
 };
 
 const normalizeEmail = (email = '') => String(email).trim().toLowerCase();
@@ -167,6 +191,69 @@ const listDrivers = async (_req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Unable to load drivers' });
+  }
+};
+
+const getPublicDriverProfile = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUserPayload(req);
+    if (!decoded?.id) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const driver = await Driver.findById(req.params.id);
+    if (!driver) {
+      return res.status(404).json({ message: 'Driver not found' });
+    }
+
+    const [statsResult] = await Ride.aggregate([
+      { $match: { driverId: driver._id, status: 'Completed' } },
+      {
+        $group: {
+          _id: '$driverId',
+          completedRides: { $sum: 1 },
+          ratingCount: {
+            $sum: {
+              $cond: [{ $ifNull: ['$review.rating', false] }, 1, 0],
+            },
+          },
+          ratingAverage: { $avg: '$review.rating' },
+        },
+      },
+    ]);
+
+    const topReviewedRides = await Ride.find({
+      driverId: driver._id,
+      status: 'Completed',
+      'review.rating': { $exists: true, $ne: null },
+    })
+      .sort({ 'review.rating': -1, 'review.reviewedAt': -1 })
+      .limit(3)
+      .select('review completedAt')
+      .lean();
+
+    const stats = {
+      completedRides: statsResult?.completedRides ?? 0,
+      ratingCount: statsResult?.ratingCount ?? 0,
+      ratingAverage: statsResult?.ratingAverage
+        ? Number(statsResult.ratingAverage.toFixed(1))
+        : 0,
+      recentReviews: topReviewedRides.map((ride) => ({
+        rating: ride.review?.rating ?? 0,
+        comment: ride.review?.comment ?? '',
+        reviewedAt: ride.review?.reviewedAt ?? ride.completedAt ?? null,
+      })),
+    };
+
+    return res.status(200).json({
+      driver: buildPublicDriverResponse(driver, stats),
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+
+    return res.status(500).json({ message: error.message || 'Unable to load driver profile' });
   }
 };
 
@@ -516,6 +603,7 @@ module.exports = {
   registerDriver,
   loginDriver,
   getDriverMe,
+  getPublicDriverProfile,
   listDrivers,
   updateDriverMe,
   updateDriverDocument,
