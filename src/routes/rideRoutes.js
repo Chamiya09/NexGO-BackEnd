@@ -3,6 +3,7 @@ const express = require('express');
 const {
   getMyRides,
   getDriverRides,
+  listRideReviewsForDriver,
   getRideById,
   getArrivalCode,
   cancelRide,
@@ -23,6 +24,9 @@ router.get('/my-rides', getMyRides);
 
 // GET /api/rides/driver-rides - driver's assigned rides
 router.get('/driver-rides', getDriverRides);
+
+// GET /api/rides/driver-reviews - approved passenger reviews for current driver
+router.get('/driver-reviews', listRideReviewsForDriver);
 
 // GET /api/rides/admin/reviews - admin review and rating moderation queue
 router.get('/admin/reviews', listRideReviewsForAdmin);

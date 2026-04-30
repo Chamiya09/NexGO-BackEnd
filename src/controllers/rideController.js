@@ -165,6 +165,38 @@ const getDriverRides = async (req, res) => {
   }
 };
 
+// ── GET /api/rides/driver-reviews ─────────────────────────────────────────────
+// Returns approved passenger reviews for the authenticated driver.
+const listRideReviewsForDriver = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const rides = await Ride.find({
+      driverId: decoded.id,
+      'review.rating': { $exists: true, $ne: null },
+      'review.status': 'approved',
+    })
+      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
+      .populate('passengerId', 'fullName email phoneNumber profileImageUrl')
+      .sort({ 'review.submittedAt': -1, 'review.reviewedAt': -1, completedAt: -1, createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    return res.status(200).json({
+      reviews: rides.map(normalizeRide),
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] listRideReviewsForDriver error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to fetch driver reviews' });
+  }
+};
+
 // ── GET /api/rides/:id ────────────────────────────────────────────────────────
 // Returns a single ride (passenger must own it).
 const getRideById = async (req, res) => {
@@ -454,6 +486,7 @@ const moderateRideReview = async (req, res) => {
 module.exports = {
   getMyRides,
   getDriverRides,
+  listRideReviewsForDriver,
   getRideById,
   getArrivalCode,
   cancelRide,
