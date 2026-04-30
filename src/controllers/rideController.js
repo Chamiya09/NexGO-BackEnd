@@ -50,6 +50,16 @@ const normalizeRide = (ride) => {
     dropoff: ride.dropoff,
     vehicleType: ride.vehicleType,
     price: ride.price,
+    promotion: ride.promotion?.promotionId
+      ? {
+          id: ride.promotion.promotionId?.toString?.() ?? null,
+          code: ride.promotion.code ?? '',
+          discountType: ride.promotion.discountType ?? null,
+          discountValue: ride.promotion.discountValue ?? 0,
+          discountAmount: ride.promotion.discountAmount ?? 0,
+          originalPrice: ride.promotion.originalPrice ?? 0,
+        }
+      : null,
     status: ride.status,
     canonicalStatus: toCanonicalStatus(ride.status),
     requestedAt: ride.createdAt,

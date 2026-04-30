@@ -3,6 +3,7 @@
 
 const Ride = require('../models/Ride');
 const Driver = require('../models/Driver');
+const Promotion = require('../models/Promotion');
 const {
   RIDE_STATUS,
   toCanonicalStatus,
@@ -46,6 +47,13 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
 const DRIVER_DISPLAY_RADIUS_KM = 2;
 const DRIVER_REQUEST_RADIUS_KM = 2;
 const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
+const VEHICLE_BASE_PRICES = {
+  Bike: 850,
+  Tuk: 1115,
+  Mini: 1301,
+  Car: 1450,
+  Van: 2100,
+};
 const rideRecipientSocketMap = new Map();
 const PASSENGER_ROOM_PREFIX = 'passenger:';
 
@@ -113,6 +121,82 @@ function getRideErrorMessage(error) {
   }
 
   return error?.message || 'Failed to create ride request. Please try again.';
+}
+
+function calculateDiscountAmount(promotion, price) {
+  const discountValue = Number(promotion?.discountValue);
+  if (!Number.isFinite(discountValue) || discountValue <= 0) return 0;
+
+  if (promotion.discountType === 'Percentage') {
+    const percent = Math.min(100, Math.max(0, discountValue));
+    return Math.min(price, price * (percent / 100));
+  }
+
+  return Math.min(price, discountValue);
+}
+
+function isPromotionExpired(promotion) {
+  return promotion?.endDate ? promotion.endDate.getTime() < Date.now() : false;
+}
+
+async function buildPromotionUsage({ passengerId, requestedVehicleType, payloadPromotion, fallbackPrice }) {
+  const requestedPromotionId = payloadPromotion?.id || payloadPromotion?.promotionId;
+  const requestedPromotionCode = String(payloadPromotion?.code || '').trim().toUpperCase();
+
+  const originalPrice = VEHICLE_BASE_PRICES[requestedVehicleType] ?? Number(fallbackPrice);
+  const safeOriginalPrice = Number.isFinite(originalPrice) && originalPrice > 0 ? originalPrice : 0;
+
+  if (!requestedPromotionId && !requestedPromotionCode) {
+    return {
+      finalPrice: safeOriginalPrice,
+      promotionSnapshot: null,
+    };
+  }
+
+  const promotion = requestedPromotionId
+    ? await Promotion.findById(requestedPromotionId)
+    : await Promotion.findOne({ code: requestedPromotionCode });
+
+  if (!promotion) {
+    return { error: { code: 'PROMOTION_NOT_FOUND', message: 'Promo code not found.' } };
+  }
+
+  if (!promotion.active || promotion.status !== 'Active') {
+    return { error: { code: 'PROMOTION_INACTIVE', message: 'Promo code is not active.' } };
+  }
+
+  if (isPromotionExpired(promotion)) {
+    return { error: { code: 'PROMOTION_EXPIRED', message: 'Promo code has expired.' } };
+  }
+
+  const alreadyUsed = await Ride.exists({
+    passengerId,
+    'promotion.promotionId': promotion._id,
+  });
+
+  if (alreadyUsed) {
+    return {
+      error: {
+        code: 'PROMOTION_ALREADY_USED',
+        message: 'You have already used this promo code.',
+      },
+    };
+  }
+
+  const discountAmount = calculateDiscountAmount(promotion, safeOriginalPrice);
+  const finalPrice = Math.max(0, safeOriginalPrice - discountAmount);
+
+  return {
+    finalPrice,
+    promotionSnapshot: {
+      promotionId: promotion._id,
+      code: promotion.code,
+      discountType: promotion.discountType,
+      discountValue: promotion.discountValue,
+      discountAmount,
+      originalPrice: safeOriginalPrice,
+    },
+  };
 }
 
 function emitRemoveRideRequest(io, rideId, extra = {}) {
@@ -286,7 +370,7 @@ function initRideSocket(io) {
       console.log('[Socket.IO] requestRide received:', payload);
 
       try {
-        const { passengerId, passengerName, vehicleType, price, pickup, dropoff } = payload;
+        const { passengerId, passengerName, vehicleType, price, pickup, dropoff, promotion } = payload;
         registerPassengerSocket(socket, passengerId);
         const requestedVehicleType = normalizeVehicleCategory(vehicleType);
 
@@ -297,6 +381,20 @@ function initRideSocket(io) {
           });
           return;
         }
+
+        const promotionUsage = await buildPromotionUsage({
+          passengerId,
+          requestedVehicleType,
+          payloadPromotion: promotion,
+          fallbackPrice: price,
+        });
+
+        if (promotionUsage.error) {
+          socket.emit('rideError', promotionUsage.error);
+          return;
+        }
+
+        const ridePrice = promotionUsage.finalPrice;
 
         const matchingDrivers = [];
 
@@ -339,9 +437,10 @@ function initRideSocket(io) {
         const ride = await Ride.create({
           passengerId,
           vehicleType: requestedVehicleType,
-          price,
+          price: ridePrice,
           pickup,
           dropoff,
+          ...(promotionUsage.promotionSnapshot && { promotion: promotionUsage.promotionSnapshot }),
           status: RIDE_STATUS.PENDING,
         });
 
@@ -350,7 +449,14 @@ function initRideSocket(io) {
           passengerId,
           passengerName: passengerName ?? 'Passenger',
           vehicleType: requestedVehicleType,
-          price,
+          price: ridePrice,
+          promotion: promotionUsage.promotionSnapshot
+            ? {
+                code: promotionUsage.promotionSnapshot.code,
+                discountAmount: promotionUsage.promotionSnapshot.discountAmount,
+                originalPrice: promotionUsage.promotionSnapshot.originalPrice,
+              }
+            : null,
           pickup,
           dropoff,
           requestedAt: ride.createdAt,
