@@ -90,6 +90,30 @@ function getOnlineDriverLocations(category) {
   return Array.from(latestByDriverId.values());
 }
 
+function getAllDriverLocationSnapshot() {
+  const latestByDriverId = new Map();
+
+  for (const [driverSocketId, location] of driverLocationMap.entries()) {
+    if (!hasValidCoords(location)) continue;
+
+    const driverKey = String(location.driverId || driverSocketId);
+    const previous = latestByDriverId.get(driverKey);
+    if (!previous || Number(location.updatedAt || 0) > Number(previous.updatedAt || 0)) {
+      latestByDriverId.set(driverKey, {
+        driverId: location.driverId || driverSocketId,
+        latitude: Number(location.latitude),
+        longitude: Number(location.longitude),
+        vehicleCategory: location.vehicleCategory,
+        isOnline: Boolean(location.isOnline),
+        heading: location.heading,
+        updatedAt: location.updatedAt,
+      });
+    }
+  }
+
+  return Array.from(latestByDriverId.values());
+}
+
 function getDriverLocationById(driverId) {
   const normalizedDriverId = String(driverId || '');
   if (!normalizedDriverId) return null;
@@ -324,9 +348,23 @@ function initRideSocket(io) {
         longitude: Number(longitude),
         vehicleCategory: nextVehicleCategory,
         isOnline: nextIsOnline,
+        heading,
+        updatedAt: Date.now(),
+      });
+      io.emit('drivers_location_update', {
+        driverId: driverId || socket.id,
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        vehicleCategory: nextVehicleCategory,
+        isOnline: nextIsOnline,
+        heading,
         updatedAt: Date.now(),
       });
       socket.broadcast.emit(`driver_location_${driverId}`, { latitude, longitude, heading });
+    });
+
+    socket.on('get_all_driver_locations', () => {
+      socket.emit('drivers_location_snapshot', getAllDriverLocationSnapshot());
     });
 
     socket.on('toggle_online_status', async ({ driverId, isOnline }) => {
