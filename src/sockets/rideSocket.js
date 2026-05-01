@@ -342,6 +342,8 @@ function initRideSocket(io) {
             ? previousLocation.isOnline
             : false;
 
+      const updatedAt = Date.now();
+
       driverLocationMap.set(socket.id, {
         driverId,
         latitude: Number(latitude),
@@ -349,7 +351,7 @@ function initRideSocket(io) {
         vehicleCategory: nextVehicleCategory,
         isOnline: nextIsOnline,
         heading,
-        updatedAt: Date.now(),
+        updatedAt,
       });
       io.emit('drivers_location_update', {
         driverId: driverId || socket.id,
@@ -358,7 +360,7 @@ function initRideSocket(io) {
         vehicleCategory: nextVehicleCategory,
         isOnline: nextIsOnline,
         heading,
-        updatedAt: Date.now(),
+        updatedAt,
       });
       socket.broadcast.emit(`driver_location_${driverId}`, { latitude, longitude, heading });
     });
@@ -375,7 +377,17 @@ function initRideSocket(io) {
         const loc = driverLocationMap.get(socket.id);
         if (loc) {
           loc.isOnline = isOnline;
+          loc.updatedAt = Date.now();
           driverLocationMap.set(socket.id, loc);
+          io.emit('drivers_location_update', {
+            driverId: loc.driverId || driverId || socket.id,
+            latitude: Number(loc.latitude),
+            longitude: Number(loc.longitude),
+            vehicleCategory: loc.vehicleCategory,
+            isOnline: Boolean(isOnline),
+            heading: loc.heading,
+            updatedAt: loc.updatedAt,
+          });
         }
       } catch (error) {
         console.error('[Socket.IO] toggle_online_status error:', error);
