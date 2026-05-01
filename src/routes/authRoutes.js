@@ -21,6 +21,7 @@ const {
   addPaymentMethod,
   setDefaultPaymentMethod,
 } = require('../controllers/authController');
+const { requireAdmin } = require('../middleware/adminAuth');
 
 const router = express.Router();
 
@@ -38,7 +39,7 @@ const passwordResetVerifyLimiter = createRateLimiter({
 
 router.post('/register', registerUser);
 router.post('/login', loginUser);
-router.get('/users', listUsers);
+router.get('/users', requireAdmin, listUsers);
 router.post('/forgot-password', forgotPassword);
 router.post('/forgot-password/request-otp', passwordResetRequestLimiter, requestPasswordResetOtp);
 router.post('/forgot-password/reset', passwordResetVerifyLimiter, resetPasswordWithOtp);

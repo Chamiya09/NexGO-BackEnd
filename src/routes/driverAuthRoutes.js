@@ -15,12 +15,13 @@ const {
   updateDriverSecurity,
   changeDriverPassword,
 } = require('../controllers/driverAuthController');
+const { requireAdmin } = require('../middleware/adminAuth');
 
 const router = express.Router();
 
 router.post('/register', registerDriver);
 router.post('/login', loginDriver);
-router.get('/drivers', listDrivers);
+router.get('/drivers', requireAdmin, listDrivers);
 router.get('/drivers/:id/public-profile', getPublicDriverProfile);
 router.get('/me', getDriverMe);
 router.patch('/me', updateDriverMe);

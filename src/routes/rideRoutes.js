@@ -1,5 +1,6 @@
 // src/routes/rideRoutes.js
 const express = require('express');
+const { requireAdmin } = require('../middleware/adminAuth');
 const {
   getMyRides,
   getDriverRides,
@@ -29,10 +30,10 @@ router.get('/driver-rides', getDriverRides);
 router.get('/driver-reviews', listRideReviewsForDriver);
 
 // GET /api/rides/admin/reviews - admin review and rating moderation queue
-router.get('/admin/reviews', listRideReviewsForAdmin);
+router.get('/admin/reviews', requireAdmin, listRideReviewsForAdmin);
 
 // PATCH /api/rides/admin/reviews/:id - admin approves, rejects, or reopens a ride review
-router.patch('/admin/reviews/:id', moderateRideReview);
+router.patch('/admin/reviews/:id', requireAdmin, moderateRideReview);
 
 // GET /api/rides/drivers/:id/public-profile - public passenger view of driver profile
 router.get('/drivers/:id/public-profile', getPublicDriverProfile);

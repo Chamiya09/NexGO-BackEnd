@@ -15,6 +15,7 @@ const {
   updateSupportTicketForAdmin,
   deleteSupportTicketForAdmin,
 } = require('../controllers/supportTicketController');
+const { requireAdmin } = require('../middleware/adminAuth');
 
 const router = express.Router();
 
@@ -27,9 +28,9 @@ router.post('/driver', createDriverSupportTicket);
 router.get('/driver/my-tickets', listMyDriverSupportTickets);
 router.patch('/driver/my-tickets/:id', updateMyDriverSupportTicket);
 router.delete('/driver/my-tickets/:id', deleteMyDriverSupportTicket);
-router.get('/admin', listSupportTicketsForAdmin);
-router.get('/admin/:id', getSupportTicketForAdmin);
-router.patch('/admin/:id', updateSupportTicketForAdmin);
-router.delete('/admin/:id', deleteSupportTicketForAdmin);
+router.get('/admin', requireAdmin, listSupportTicketsForAdmin);
+router.get('/admin/:id', requireAdmin, getSupportTicketForAdmin);
+router.patch('/admin/:id', requireAdmin, updateSupportTicketForAdmin);
+router.delete('/admin/:id', requireAdmin, deleteSupportTicketForAdmin);
 
 module.exports = router;
