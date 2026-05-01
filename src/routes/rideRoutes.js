@@ -10,6 +10,7 @@ const {
   cancelRide,
   submitRideReview,
   deleteRideReview,
+  listTripsForAdmin,
   listRideReviewsForAdmin,
   moderateRideReview,
 } = require('../controllers/rideController');
@@ -28,6 +29,9 @@ router.get('/driver-rides', getDriverRides);
 
 // GET /api/rides/driver-reviews - approved passenger reviews for current driver
 router.get('/driver-reviews', listRideReviewsForDriver);
+
+// GET /api/rides/admin/trips - admin system-wide trips and activities
+router.get('/admin/trips', requireAdmin, listTripsForAdmin);
 
 // GET /api/rides/admin/reviews - admin review and rating moderation queue
 router.get('/admin/reviews', requireAdmin, listRideReviewsForAdmin);

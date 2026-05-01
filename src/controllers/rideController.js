@@ -419,6 +419,24 @@ const normalizeAdminReview = (ride) => {
   };
 };
 
+const listTripsForAdmin = async (_req, res) => {
+  try {
+    const rides = await Ride.find()
+      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
+      .populate('passengerId', 'fullName email phoneNumber profileImageUrl')
+      .sort({ createdAt: -1 })
+      .limit(150)
+      .lean();
+
+    return res.status(200).json({
+      trips: rides.map(normalizeRide),
+    });
+  } catch (error) {
+    console.error('[rideController] listTripsForAdmin error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to load trips' });
+  }
+};
+
 const listRideReviewsForAdmin = async (req, res) => {
   try {
     const status = String(req.query.status || 'review').toLowerCase();
@@ -492,6 +510,7 @@ module.exports = {
   cancelRide,
   submitRideReview,
   deleteRideReview,
+  listTripsForAdmin,
   listRideReviewsForAdmin,
   moderateRideReview,
 };
