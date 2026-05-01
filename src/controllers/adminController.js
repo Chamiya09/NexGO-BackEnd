@@ -160,3 +160,43 @@ module.exports = {
   updateAdminProfile,
   changeAdminPassword,
 };
+
+const Ride = require('../models/Ride');
+
+const getDashboardAnalytics = async (req, res) => {
+  try {
+    const rides = await Ride.find({});
+    
+    let totalRevenue = 0;
+    let activeRides = 0;
+    let cancelledRides = 0;
+    let totalWaitTime = 0;
+    let waitTimeCount = 0;
+
+    rides.forEach(ride => {
+      if (ride.status === 'Completed') {
+        totalRevenue += (ride.fare || 0);
+      }
+      if (['Pending', 'Accepted', 'Arrived', 'InProgress'].includes(ride.status)) {
+        activeRides++;
+      }
+      if (ride.status === 'Cancelled') {
+        cancelledRides++;
+      }
+      if (ride.createdAt && ride.acceptedAt) {
+        const waitTime = (new Date(ride.acceptedAt) - new Date(ride.createdAt)) / 60000;
+        totalWaitTime += waitTime;
+        waitTimeCount++;
+      }
+    });
+
+    const waitTimeAvg = waitTimeCount > 0 ? (totalWaitTime / waitTimeCount).toFixed(1) : 0;
+
+    res.status(200).json({ totalRevenue, activeRides, cancelledRides, waitTimeAvg });
+  } catch (error) {
+    console.error('Error fetching analytics:', error);
+    res.status(500).json({ message: 'Failed to fetch analytics', error: error.message });
+  }
+};
+
+module.exports.getDashboardAnalytics = getDashboardAnalytics;
