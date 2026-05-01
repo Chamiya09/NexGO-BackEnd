@@ -1,7 +1,9 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 
 const Driver = require('../models/Driver');
+const Ride = require('../models/Ride');
 
 const buildDriverResponse = (driver) => ({
   id: driver._id,
@@ -15,6 +17,20 @@ const buildDriverResponse = (driver) => ({
   documents: driver.documents || [],
   vehicle: driver.vehicle || null,
   security: driver.security || {},
+});
+
+const buildPublicDriverResponse = (driver, stats = {}) => ({
+  id: driver._id,
+  fullName: driver.fullName,
+  phoneNumber: driver.phoneNumber,
+  profileImageUrl: driver.profileImageUrl || '',
+  status: driver.status,
+  isOnline: Boolean(driver.isOnline),
+  vehicle: driver.vehicle || null,
+  ratingAverage: stats.ratingAverage ?? 0,
+  ratingCount: stats.ratingCount ?? 0,
+  completedRides: stats.completedRides ?? 0,
+  recentReviews: stats.recentReviews ?? [],
 });
 
 const getTokenFromRequest = (req) => {
@@ -167,6 +183,103 @@ const listDrivers = async (_req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Unable to load drivers' });
+  }
+};
+
+const buildPublicDriverProfilePayload = async (driverId) => {
+  if (!mongoose.Types.ObjectId.isValid(driverId)) {
+    const error = new Error('Invalid driver profile id');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const driver = await Driver.findById(driverId);
+  if (!driver) {
+    const error = new Error('Driver not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const completedStatusMatch = ['Completed', 'completed'];
+  const [statsResult] = await Ride.aggregate([
+    {
+      $match: {
+        driverId: driver._id,
+        status: { $in: completedStatusMatch },
+        'review.status': 'approved',
+      },
+    },
+    {
+      $group: {
+        _id: '$driverId',
+        completedRides: { $sum: 1 },
+        ratingCount: {
+          $sum: {
+            $cond: [{ $ifNull: ['$review.rating', false] }, 1, 0],
+          },
+        },
+        ratingAverage: { $avg: '$review.rating' },
+      },
+    },
+  ]);
+
+  const topReviewedRides = await Ride.find({
+    driverId: driver._id,
+    status: { $in: completedStatusMatch },
+    'review.rating': { $exists: true, $ne: null },
+    'review.status': 'approved',
+  })
+    .sort({ 'review.rating': -1, 'review.reviewedAt': -1 })
+    .limit(3)
+    .select('review completedAt')
+    .lean();
+
+  const stats = {
+    completedRides: statsResult?.completedRides ?? 0,
+    ratingCount: statsResult?.ratingCount ?? 0,
+    ratingAverage: statsResult?.ratingAverage
+      ? Number(statsResult.ratingAverage.toFixed(1))
+      : 0,
+    recentReviews: topReviewedRides.map((ride) => ({
+      rating: ride.review?.rating ?? 0,
+      comment: ride.review?.comment ?? '',
+      reviewedAt: ride.review?.reviewedAt ?? ride.completedAt ?? null,
+    })),
+  };
+
+  return buildPublicDriverResponse(driver, stats);
+};
+
+const getPublicDriverProfile = async (req, res) => {
+  try {
+    const driver = await buildPublicDriverProfilePayload(req.params.id);
+
+    return res.status(200).json({ driver });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      message: error.message || 'Unable to load driver profile',
+    });
+  }
+};
+
+const getRidePublicDriverProfile = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid ride id' });
+    }
+
+    const ride = await Ride.findById(req.params.id).select('driverId');
+    if (!ride?.driverId) {
+      return res.status(404).json({ message: 'Driver profile not available for this ride' });
+    }
+
+    const driver = await buildPublicDriverProfilePayload(ride.driverId);
+
+    return res.status(200).json({ driver });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      message: error.message || 'Unable to load driver profile',
+    });
   }
 };
 
@@ -516,6 +629,8 @@ module.exports = {
   registerDriver,
   loginDriver,
   getDriverMe,
+  getPublicDriverProfile,
+  getRidePublicDriverProfile,
   listDrivers,
   updateDriverMe,
   updateDriverDocument,

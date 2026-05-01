@@ -9,6 +9,41 @@ const coordinateSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const reviewSchema = new mongoose.Schema(
+  {
+    rating: {
+      type: Number,
+      min: [1, 'Rating must be at least 1'],
+      max: [5, 'Rating must be at most 5'],
+      default: null,
+    },
+    comment: {
+      type: String,
+      trim: true,
+      maxlength: [220, 'Review comment must be 220 characters or less'],
+      default: '',
+    },
+    status: {
+      type: String,
+      enum: ['review', 'approved', 'rejected'],
+      default: 'review',
+    },
+    submittedAt: {
+      type: Date,
+      default: null,
+    },
+    reviewedAt: {
+      type: Date,
+      default: null,
+    },
+    moderatedAt: {
+      type: Date,
+      default: null,
+    },
+  },
+  { _id: false }
+);
+
 const rideSchema = new mongoose.Schema(
   {
     passengerId: {
@@ -77,6 +112,10 @@ const rideSchema = new mongoose.Schema(
     arrivalVerificationExpiresAt: { type: Date, default: null },
     acceptedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
+    review: {
+      type: reviewSchema,
+      default: null,
+    },
   },
   {
     timestamps: true,

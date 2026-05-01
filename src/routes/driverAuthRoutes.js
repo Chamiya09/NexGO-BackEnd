@@ -4,6 +4,7 @@ const {
   registerDriver,
   loginDriver,
   getDriverMe,
+  getPublicDriverProfile,
   listDrivers,
   updateDriverMe,
   updateDriverDocument,
@@ -20,6 +21,7 @@ const router = express.Router();
 router.post('/register', registerDriver);
 router.post('/login', loginDriver);
 router.get('/drivers', listDrivers);
+router.get('/drivers/:id/public-profile', getPublicDriverProfile);
 router.get('/me', getDriverMe);
 router.patch('/me', updateDriverMe);
 router.patch('/me/password', changeDriverPassword);
