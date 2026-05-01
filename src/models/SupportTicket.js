@@ -13,6 +13,14 @@ const SUPPORT_TICKET_TOPICS = [
   'App or booking issue',
   'Saved addresses',
   'Accessibility help',
+  'Trip assignment issue',
+  'Passenger issue',
+  'Earnings or payout',
+  'Document verification',
+  'Vehicle profile issue',
+  'Driver app issue',
+  'Account activation',
+  'Safety incident',
 ];
 
 const supportTicketSchema = new mongoose.Schema(
@@ -20,7 +28,19 @@ const supportTicketSchema = new mongoose.Schema(
     passengerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      default: null,
+      index: true,
+    },
+    driverId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Driver',
+      default: null,
+      index: true,
+    },
+    requesterType: {
+      type: String,
+      enum: ['Passenger', 'Driver'],
+      default: 'Passenger',
       index: true,
     },
     topic: {
@@ -77,6 +97,7 @@ const supportTicketSchema = new mongoose.Schema(
 );
 
 supportTicketSchema.index({ passengerId: 1, createdAt: -1 });
+supportTicketSchema.index({ driverId: 1, createdAt: -1 });
 supportTicketSchema.index({ status: 1, priority: 1, createdAt: -1 });
 
 module.exports = {

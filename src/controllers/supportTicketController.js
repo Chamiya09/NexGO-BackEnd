@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 
 const User = require('../models/User');
+const Driver = require('../models/Driver');
 const { SupportTicket, SUPPORT_TICKET_TOPICS } = require('../models/SupportTicket');
 
 const SUPPORT_TICKET_STATUSES = ['Pending', 'Open', 'In Review', 'Resolved', 'Closed'];
@@ -24,6 +25,16 @@ const getAuthenticatedUser = async (req) => {
   return User.findById(decoded.id);
 };
 
+const getAuthenticatedDriver = async (req) => {
+  const token = getTokenFromRequest(req);
+  if (!token) {
+    return null;
+  }
+
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  return Driver.findById(decoded.id);
+};
+
 const normalizePassenger = (passenger) => {
   if (!passenger || typeof passenger !== 'object') {
     return null;
@@ -38,10 +49,27 @@ const normalizePassenger = (passenger) => {
   };
 };
 
+const normalizeDriver = (driver) => {
+  if (!driver || typeof driver !== 'object') {
+    return null;
+  }
+
+  return {
+    id: driver._id?.toString?.() ?? driver.toString?.() ?? '',
+    fullName: driver.fullName ?? '',
+    email: driver.email ?? '',
+    phoneNumber: driver.phoneNumber ?? '',
+    profileImageUrl: driver.profileImageUrl ?? '',
+  };
+};
+
 const normalizeTicket = (ticket) => ({
   id: ticket._id.toString(),
   passengerId: ticket.passengerId?._id?.toString?.() ?? ticket.passengerId?.toString?.() ?? '',
+  driverId: ticket.driverId?._id?.toString?.() ?? ticket.driverId?.toString?.() ?? '',
+  requesterType: ticket.requesterType || (ticket.driverId ? 'Driver' : 'Passenger'),
   passenger: normalizePassenger(ticket.passengerId),
+  driver: normalizeDriver(ticket.driverId),
   topic: ticket.topic,
   subject: ticket.subject,
   description: ticket.description,
@@ -87,6 +115,7 @@ const createSupportTicket = async (req, res) => {
 
     const ticket = await SupportTicket.create({
       passengerId: user._id,
+      requesterType: 'Passenger',
       topic,
       subject,
       description,
@@ -108,6 +137,55 @@ const createSupportTicket = async (req, res) => {
   }
 };
 
+const createDriverSupportTicket = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const topic = normalizeText(req.body.topic);
+    const subject = normalizeText(req.body.subject);
+    const description = normalizeText(req.body.description);
+    const rideReference = normalizeText(req.body.rideReference);
+    const priority = req.body.priority === 'Urgent' ? 'Urgent' : 'Normal';
+
+    if (!SUPPORT_TICKET_TOPICS.includes(topic)) {
+      return res.status(400).json({ message: 'Please select a valid support topic.' });
+    }
+
+    if (subject.length < 3) {
+      return res.status(400).json({ message: 'Subject must be at least 3 characters.' });
+    }
+
+    if (description.length < 12) {
+      return res.status(400).json({ message: 'Description must be at least 12 characters.' });
+    }
+
+    const ticket = await SupportTicket.create({
+      driverId: driver._id,
+      requesterType: 'Driver',
+      topic,
+      subject,
+      description,
+      rideReference,
+      priority,
+    });
+
+    const populatedTicket = await SupportTicket.findById(ticket._id).populate(
+      'driverId',
+      'fullName email phoneNumber profileImageUrl'
+    );
+
+    return res.status(201).json({
+      message: 'Driver support ticket opened successfully',
+      ticket: normalizeTicket(populatedTicket),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to open support ticket' });
+  }
+};
+
 const listMySupportTickets = async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
@@ -118,6 +196,23 @@ const listMySupportTickets = async (req, res) => {
     const tickets = await SupportTicket.find({ passengerId: user._id })
       .sort({ createdAt: -1 })
       .populate('passengerId', 'fullName email phoneNumber profileImageUrl');
+
+    return res.status(200).json({ tickets: tickets.map(normalizeTicket) });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to load support tickets' });
+  }
+};
+
+const listMyDriverSupportTickets = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const tickets = await SupportTicket.find({ driverId: driver._id })
+      .sort({ createdAt: -1 })
+      .populate('driverId', 'fullName email phoneNumber profileImageUrl');
 
     return res.status(200).json({ tickets: tickets.map(normalizeTicket) });
   } catch (error) {
@@ -184,6 +279,61 @@ const updateMySupportTicket = async (req, res) => {
   }
 };
 
+const updateMyDriverSupportTicket = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const ticket = await SupportTicket.findOne({ _id: req.params.id, driverId: driver._id });
+    if (!ticket) {
+      return res.status(404).json({ message: 'Support ticket not found' });
+    }
+
+    if (['Resolved', 'Closed'].includes(ticket.status)) {
+      return res.status(400).json({ message: 'Resolved tickets cannot be updated.' });
+    }
+
+    const subject = typeof req.body.subject === 'string' ? normalizeText(req.body.subject) : ticket.subject;
+    const description = typeof req.body.description === 'string' ? normalizeText(req.body.description) : ticket.description;
+    const rideReference = typeof req.body.rideReference === 'string' ? normalizeText(req.body.rideReference) : ticket.rideReference;
+    const topic = typeof req.body.topic === 'string' ? normalizeText(req.body.topic) : ticket.topic;
+    const priority = req.body.priority === 'Urgent' ? 'Urgent' : ticket.priority;
+
+    if (!SUPPORT_TICKET_TOPICS.includes(topic)) {
+      return res.status(400).json({ message: 'Please select a valid support topic.' });
+    }
+
+    if (subject.length < 3) {
+      return res.status(400).json({ message: 'Subject must be at least 3 characters.' });
+    }
+
+    if (description.length < 12) {
+      return res.status(400).json({ message: 'Description must be at least 12 characters.' });
+    }
+
+    ticket.subject = subject;
+    ticket.description = description;
+    ticket.rideReference = rideReference;
+    ticket.topic = topic;
+    ticket.priority = priority;
+    await ticket.save();
+
+    const populatedTicket = await SupportTicket.findById(ticket._id).populate(
+      'driverId',
+      'fullName email phoneNumber profileImageUrl'
+    );
+
+    return res.status(200).json({
+      message: 'Support ticket updated successfully',
+      ticket: normalizeTicket(populatedTicket),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to update support ticket' });
+  }
+};
+
 const deleteMySupportTicket = async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
@@ -212,6 +362,29 @@ const deleteMySupportTicket = async (req, res) => {
   }
 };
 
+const deleteMyDriverSupportTicket = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const ticket = await SupportTicket.findOne({ _id: req.params.id, driverId: driver._id });
+    if (!ticket) {
+      return res.status(404).json({ message: 'Support ticket not found' });
+    }
+
+    if (['Resolved', 'Closed'].includes(ticket.status)) {
+      return res.status(400).json({ message: 'Resolved tickets cannot be deleted.' });
+    }
+
+    await ticket.deleteOne();
+    return res.status(200).json({ message: 'Support ticket deleted successfully', id: req.params.id });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to delete support ticket' });
+  }
+};
+
 const listSupportTicketsForAdmin = async (req, res) => {
   try {
     const { status, priority } = req.query;
@@ -227,7 +400,8 @@ const listSupportTicketsForAdmin = async (req, res) => {
 
     const tickets = await SupportTicket.find(filter)
       .sort({ createdAt: -1 })
-      .populate('passengerId', 'fullName email phoneNumber profileImageUrl');
+      .populate('passengerId', 'fullName email phoneNumber profileImageUrl')
+      .populate('driverId', 'fullName email phoneNumber profileImageUrl');
 
     return res.status(200).json({ tickets: tickets.map(normalizeTicket) });
   } catch (error) {
@@ -240,7 +414,7 @@ const getSupportTicketForAdmin = async (req, res) => {
     const ticket = await SupportTicket.findById(req.params.id).populate(
       'passengerId',
       'fullName email phoneNumber profileImageUrl'
-    );
+    ).populate('driverId', 'fullName email phoneNumber profileImageUrl');
 
     if (!ticket) {
       return res.status(404).json({ message: 'Support ticket not found' });
@@ -276,6 +450,7 @@ const updateSupportTicketForAdmin = async (req, res) => {
       new: true,
       runValidators: true,
     }).populate('passengerId', 'fullName email phoneNumber profileImageUrl');
+    await ticket?.populate('driverId', 'fullName email phoneNumber profileImageUrl');
 
     if (!ticket) {
       return res.status(404).json({ message: 'Support ticket not found' });
@@ -310,9 +485,13 @@ const deleteSupportTicketForAdmin = async (req, res) => {
 module.exports = {
   listSupportTicketTopics,
   createSupportTicket,
+  createDriverSupportTicket,
   listMySupportTickets,
+  listMyDriverSupportTickets,
   updateMySupportTicket,
+  updateMyDriverSupportTicket,
   deleteMySupportTicket,
+  deleteMyDriverSupportTicket,
   listSupportTicketsForAdmin,
   getSupportTicketForAdmin,
   updateSupportTicketForAdmin,
