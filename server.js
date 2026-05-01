@@ -47,6 +47,7 @@ app.use('/api/driver-auth', require('./src/routes/driverAuthRoutes'));
 app.use('/api/upload', require('./src/routes/uploadRoutes'));
 app.use('/api/rides', require('./src/routes/rideRoutes'));
 app.use('/api/promotions', require('./src/routes/promotionRoutes'));
+app.use('/api/support-tickets', require('./src/routes/supportTicketRoutes'));
 
 // ── Start server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
