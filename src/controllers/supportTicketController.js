@@ -3,6 +3,8 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { SupportTicket, SUPPORT_TICKET_TOPICS } = require('../models/SupportTicket');
 
+const SUPPORT_TICKET_STATUSES = ['Pending', 'Open', 'In Review', 'Resolved', 'Closed'];
+
 const getTokenFromRequest = (req) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -215,7 +217,7 @@ const listSupportTicketsForAdmin = async (req, res) => {
     const { status, priority } = req.query;
     const filter = {};
 
-    if (status && ['Open', 'In Review', 'Resolved', 'Closed'].includes(status)) {
+    if (status && SUPPORT_TICKET_STATUSES.includes(status)) {
       filter.status = status;
     }
 
@@ -258,7 +260,7 @@ const updateSupportTicketForAdmin = async (req, res) => {
     const update = {};
 
     if (status) {
-      if (!['Open', 'In Review', 'Resolved', 'Closed'].includes(status)) {
+      if (!SUPPORT_TICKET_STATUSES.includes(status)) {
         return res.status(400).json({ message: 'Please select a valid ticket status.' });
       }
 
