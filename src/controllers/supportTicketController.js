@@ -146,6 +146,23 @@ const listSupportTicketsForAdmin = async (req, res) => {
   }
 };
 
+const getSupportTicketForAdmin = async (req, res) => {
+  try {
+    const ticket = await SupportTicket.findById(req.params.id).populate(
+      'passengerId',
+      'fullName email phoneNumber profileImageUrl'
+    );
+
+    if (!ticket) {
+      return res.status(404).json({ message: 'Support ticket not found' });
+    }
+
+    return res.status(200).json({ ticket: normalizeTicket(ticket) });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to load support ticket' });
+  }
+};
+
 const updateSupportTicketForAdmin = async (req, res) => {
   try {
     const { id } = req.params;
@@ -189,5 +206,6 @@ module.exports = {
   createSupportTicket,
   listMySupportTickets,
   listSupportTicketsForAdmin,
+  getSupportTicketForAdmin,
   updateSupportTicketForAdmin,
 };
