@@ -123,6 +123,93 @@ const listMySupportTickets = async (req, res) => {
   }
 };
 
+const updateMySupportTicket = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const ticket = await SupportTicket.findOne({ _id: req.params.id, passengerId: user._id });
+
+    if (!ticket) {
+      return res.status(404).json({ message: 'Support ticket not found' });
+    }
+
+    if (['Resolved', 'Closed'].includes(ticket.status)) {
+      return res.status(400).json({ message: 'Resolved tickets cannot be updated.' });
+    }
+
+    const subject =
+      typeof req.body.subject === 'string' ? normalizeText(req.body.subject) : ticket.subject;
+    const description =
+      typeof req.body.description === 'string' ? normalizeText(req.body.description) : ticket.description;
+    const rideReference =
+      typeof req.body.rideReference === 'string' ? normalizeText(req.body.rideReference) : ticket.rideReference;
+    const topic = typeof req.body.topic === 'string' ? normalizeText(req.body.topic) : ticket.topic;
+    const priority = req.body.priority === 'Urgent' ? 'Urgent' : ticket.priority;
+
+    if (!SUPPORT_TICKET_TOPICS.includes(topic)) {
+      return res.status(400).json({ message: 'Please select a valid support topic.' });
+    }
+
+    if (subject.length < 3) {
+      return res.status(400).json({ message: 'Subject must be at least 3 characters.' });
+    }
+
+    if (description.length < 12) {
+      return res.status(400).json({ message: 'Description must be at least 12 characters.' });
+    }
+
+    ticket.subject = subject;
+    ticket.description = description;
+    ticket.rideReference = rideReference;
+    ticket.topic = topic;
+    ticket.priority = priority;
+    await ticket.save();
+
+    const populatedTicket = await SupportTicket.findById(ticket._id).populate(
+      'passengerId',
+      'fullName email phoneNumber profileImageUrl'
+    );
+
+    return res.status(200).json({
+      message: 'Support ticket updated successfully',
+      ticket: normalizeTicket(populatedTicket),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to update support ticket' });
+  }
+};
+
+const deleteMySupportTicket = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const ticket = await SupportTicket.findOne({ _id: req.params.id, passengerId: user._id });
+
+    if (!ticket) {
+      return res.status(404).json({ message: 'Support ticket not found' });
+    }
+
+    if (['Resolved', 'Closed'].includes(ticket.status)) {
+      return res.status(400).json({ message: 'Resolved tickets cannot be deleted.' });
+    }
+
+    await ticket.deleteOne();
+
+    return res.status(200).json({
+      message: 'Support ticket deleted successfully',
+      id: req.params.id,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to delete support ticket' });
+  }
+};
+
 const listSupportTicketsForAdmin = async (req, res) => {
   try {
     const { status, priority } = req.query;
@@ -201,11 +288,31 @@ const updateSupportTicketForAdmin = async (req, res) => {
   }
 };
 
+const deleteSupportTicketForAdmin = async (req, res) => {
+  try {
+    const ticket = await SupportTicket.findByIdAndDelete(req.params.id);
+
+    if (!ticket) {
+      return res.status(404).json({ message: 'Support ticket not found' });
+    }
+
+    return res.status(200).json({
+      message: 'Support ticket deleted successfully',
+      id: req.params.id,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to delete support ticket' });
+  }
+};
+
 module.exports = {
   listSupportTicketTopics,
   createSupportTicket,
   listMySupportTickets,
+  updateMySupportTicket,
+  deleteMySupportTicket,
   listSupportTicketsForAdmin,
   getSupportTicketForAdmin,
   updateSupportTicketForAdmin,
+  deleteSupportTicketForAdmin,
 };
