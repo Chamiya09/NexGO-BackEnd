@@ -8,6 +8,7 @@ const {
   listDrivers,
   updateDriverMe,
   updateDriverDocument,
+  reviewDriverDocument,
   getDriverVehicle,
   createDriverVehicle,
   updateDriverVehicle,
@@ -22,6 +23,7 @@ const router = express.Router();
 router.post('/register', registerDriver);
 router.post('/login', loginDriver);
 router.get('/drivers', requireAdmin, listDrivers);
+router.patch('/drivers/:id/documents/:documentType', requireAdmin, reviewDriverDocument);
 router.get('/drivers/:id/public-profile', getPublicDriverProfile);
 router.get('/me', getDriverMe);
 router.patch('/me', updateDriverMe);

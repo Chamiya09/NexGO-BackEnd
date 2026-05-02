@@ -387,6 +387,61 @@ const updateDriverDocument = async (req, res) => {
   }
 };
 
+const reviewDriverDocument = async (req, res) => {
+  try {
+    const { id, documentType } = req.params;
+    const { status, rejectionReason } = req.body;
+
+    const allowedTypes = ['license', 'insurance', 'registration'];
+    if (!allowedTypes.includes(documentType)) {
+      return res.status(400).json({ message: 'documentType must be license, insurance, or registration' });
+    }
+
+    const validStatuses = ['approved', 'rejected'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: 'status must be approved or rejected' });
+    }
+
+    const driver = await Driver.findById(id);
+    if (!driver) {
+      return res.status(404).json({ message: 'Driver not found' });
+    }
+
+    const documents = driver.documents || [];
+    let documentIndex = documents.findIndex((doc) => doc.documentType === documentType);
+
+    if (documentIndex === -1) {
+      return res.status(404).json({ message: 'Document not found on this driver' });
+    }
+
+    documents[documentIndex].status = status;
+    documents[documentIndex].reviewedAt = new Date();
+    documents[documentIndex].rejectionReason = status === 'rejected' ? (rejectionReason || 'Rejected by Admin') : '';
+    
+    // Auto-approve driver if all documents are approved
+    const allApproved = allowedTypes.every(type => {
+      const doc = documents.find(d => d.documentType === type);
+      return doc && doc.status === 'approved';
+    });
+
+    if (allApproved && driver.status === 'pending') {
+      driver.status = 'active';
+    } else if (!allApproved && driver.status === 'active') {
+      driver.status = 'pending';
+    }
+
+    driver.documents = documents;
+    await driver.save();
+
+    return res.status(200).json({
+      message: `Document ${status} successfully`,
+      driver: buildDriverResponse(driver),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to review driver document' });
+  }
+};
+
 const getDriverVehicle = async (req, res) => {
   try {
     const driver = await getAuthenticatedDriver(req);
@@ -634,6 +689,7 @@ module.exports = {
   listDrivers,
   updateDriverMe,
   updateDriverDocument,
+  reviewDriverDocument,
   getDriverVehicle,
   createDriverVehicle,
   updateDriverVehicle,
