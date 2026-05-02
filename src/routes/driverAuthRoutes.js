@@ -10,6 +10,7 @@ const {
   updateDriverMe,
   updateDriverDocument,
   reviewDriverDocument,
+  updateDriverStatus,
   getDriverVehicle,
   createDriverVehicle,
   updateDriverVehicle,
@@ -28,6 +29,7 @@ router.get('/session', getDriverSession);
 router.post('/logout', logoutDriver);
 router.get('/drivers', requireAdmin, listDrivers);
 router.patch('/drivers/:id/documents/:documentType', requireAdmin, reviewDriverDocument);
+router.patch('/drivers/:id/status', requireAdmin, updateDriverStatus);
 router.get('/drivers/:id/public-profile', getPublicDriverProfile);
 router.get('/me', getDriverMe);
 router.patch('/me', updateDriverMe);

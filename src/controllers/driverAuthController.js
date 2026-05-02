@@ -433,6 +433,37 @@ const updateDriverDocument = async (req, res) => {
   }
 };
 
+const updateDriverStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const nextStatus = String(req.body.status || '').trim().toLowerCase();
+    const allowedStatuses = ['pending', 'active', 'suspended'];
+
+    if (!allowedStatuses.includes(nextStatus)) {
+      return res.status(400).json({ message: 'status must be pending, active, or suspended' });
+    }
+
+    const driver = await Driver.findById(id);
+    if (!driver) {
+      return res.status(404).json({ message: 'Driver not found' });
+    }
+
+    driver.status = nextStatus;
+    if (nextStatus === 'suspended') {
+      driver.isOnline = false;
+    }
+
+    await driver.save();
+
+    return res.status(200).json({
+      message: 'Driver status updated',
+      driver: buildDriverResponse(driver),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to update driver status' });
+  }
+};
+
 const reviewDriverDocument = async (req, res) => {
   try {
     const { id, documentType } = req.params;
@@ -737,6 +768,7 @@ module.exports = {
   updateDriverMe,
   updateDriverDocument,
   reviewDriverDocument,
+  updateDriverStatus,
   getDriverVehicle,
   createDriverVehicle,
   updateDriverVehicle,
