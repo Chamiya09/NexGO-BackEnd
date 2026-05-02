@@ -223,6 +223,8 @@ module.exports = {
 };
 
 const Ride = require('../models/Ride');
+const Driver = require('../models/Driver');
+const { SupportTicket } = require('../models/SupportTicket');
 
 const ADMIN_COMMISSION_RATE = 0.05;
 
@@ -266,6 +268,10 @@ const getDashboardAnalytics = async (req, res) => {
 
     const waitTimeAvg = waitTimeCount > 0 ? (totalWaitTime / waitTimeCount).toFixed(1) : 0;
 
+    const approvals = await Driver.countDocuments({ status: 'pending' });
+    const driversLive = await Driver.countDocuments({ isOnline: true });
+    const escalations = await SupportTicket.countDocuments({ status: { $in: ['Pending', 'Open'] } });
+
     res.status(200).json({
       totalRevenue,
       totalCommission,
@@ -273,6 +279,9 @@ const getDashboardAnalytics = async (req, res) => {
       completedRides,
       cancelledRides,
       waitTimeAvg,
+      approvals,
+      driversLive,
+      escalations,
     });
   } catch (error) {
     console.error('Error fetching analytics:', error);
