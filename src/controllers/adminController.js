@@ -239,6 +239,7 @@ const getDashboardAnalytics = async (req, res) => {
     let totalRevenue = 0;
     let totalCommission = 0;
     let activeRides = 0;
+    let completedRides = 0;
     let cancelledRides = 0;
     let totalWaitTime = 0;
     let waitTimeCount = 0;
@@ -248,6 +249,7 @@ const getDashboardAnalytics = async (req, res) => {
         const rideAmount = Number(ride.price || 0);
         totalRevenue += Number.isFinite(rideAmount) ? rideAmount : 0;
         totalCommission += calculateAdminCommission(rideAmount);
+        completedRides++;
       }
       if (['Pending', 'Accepted', 'Arrived', 'InProgress'].includes(ride.status)) {
         activeRides++;
@@ -268,6 +270,7 @@ const getDashboardAnalytics = async (req, res) => {
       totalRevenue,
       totalCommission,
       activeRides,
+      completedRides,
       cancelledRides,
       waitTimeAvg,
     });
