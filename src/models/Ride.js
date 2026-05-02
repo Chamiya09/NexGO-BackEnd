@@ -112,6 +112,13 @@ const rideSchema = new mongoose.Schema(
     arrivalVerificationExpiresAt: { type: Date, default: null },
     acceptedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
+    paymentStatus: {
+      type: String,
+      enum: ['UNPAID', 'PAID'],
+      default: 'UNPAID',
+    },
+    paymentConfirmedAt: { type: Date, default: null },
+    walletBalanceAfter: { type: Number, default: null },
     review: {
       type: reviewSchema,
       default: null,

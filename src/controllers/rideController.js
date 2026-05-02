@@ -3,6 +3,7 @@
 
 const jwt = require('jsonwebtoken');
 const Ride = require('../models/Ride');
+const User = require('../models/User');
 const { emitRemoveRideRequest } = require('../sockets/rideSocket');
 const {
   toCanonicalStatus,
@@ -263,6 +264,87 @@ const cancelRide = async (req, res) => {
   }
 };
 
+// ── POST /api/rides/:id/confirm-payment ─────────────────────────────────────
+// Passenger confirms payment and wallet is debited.
+const confirmRidePayment = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const ride = await Ride.findOne({
+      _id: req.params.id,
+      passengerId: decoded.id,
+    });
+
+    if (!ride) {
+      return res.status(404).json({ message: 'Ride not found' });
+    }
+
+    const canonicalStatus = toCanonicalStatus(ride.status);
+    if (canonicalStatus !== 'COMPLETED') {
+      return res.status(400).json({ message: 'Ride is not completed yet.' });
+    }
+
+    if (ride.paymentStatus === 'PAID') {
+      return res.status(200).json({
+        message: 'Payment already confirmed.',
+        ride: normalizeRide(ride),
+      });
+    }
+
+    const amount = Number(ride.price || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid ride amount.' });
+    }
+
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Passenger not found' });
+    }
+
+    if (!user.wallet) {
+      user.wallet = { balance: 0, transactions: [] };
+    }
+    if (!Array.isArray(user.wallet.transactions)) {
+      user.wallet.transactions = [];
+    }
+
+    const balance = Number(user.wallet.balance || 0);
+    if (balance < amount) {
+      return res.status(400).json({ message: 'Insufficient wallet balance.' });
+    }
+
+    const nextBalance = balance - amount;
+    user.wallet.balance = nextBalance;
+    user.wallet.transactions.push({
+      type: 'ride_payment',
+      amount,
+      balanceAfter: nextBalance,
+      description: `Ride payment ${ride._id.toString().slice(-6).toUpperCase()}`,
+    });
+
+    ride.paymentStatus = 'PAID';
+    ride.paymentConfirmedAt = new Date();
+    ride.walletBalanceAfter = nextBalance;
+
+    await Promise.all([user.save(), ride.save()]);
+
+    return res.status(200).json({
+      message: 'Payment confirmed.',
+      ride: normalizeRide(ride),
+      wallet: { balance: nextBalance },
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] confirmRidePayment error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to confirm payment' });
+  }
+};
+
 // ── PATCH /api/rides/:id/review ──────────────────────────────────────────────
 // Passenger adds or updates their review for a completed ride.
 const listTripsForAdmin = async (_req, res) => {
@@ -289,5 +371,6 @@ module.exports = {
   getRideById,
   getArrivalCode,
   cancelRide,
+  confirmRidePayment,
   listTripsForAdmin,
 };

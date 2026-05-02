@@ -7,6 +7,7 @@ const {
   getRideById,
   getArrivalCode,
   cancelRide,
+  confirmRidePayment,
   listTripsForAdmin,
 } = require('../controllers/rideController');
 const {
@@ -52,6 +53,9 @@ router.patch('/:id/cancel', cancelRide);
 
 // GET /api/rides/:id/arrival-code - passenger reads arrival verification code
 router.get('/:id/arrival-code', getArrivalCode);
+
+// POST /api/rides/:id/confirm-payment - passenger confirms trip payment
+router.post('/:id/confirm-payment', confirmRidePayment);
 
 // PATCH /api/rides/:id/review - passenger adds or updates a completed ride review
 router.patch('/:id/review', submitRideReview);
