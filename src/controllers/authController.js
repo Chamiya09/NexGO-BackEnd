@@ -20,11 +20,15 @@ const buildUserResponse = (user) => ({
   email: user.email,
   phoneNumber: user.phoneNumber,
   profileImageUrl: user.profileImageUrl || '',
+  status: user.status || 'active',
 });
 
 const buildUserManagementResponse = (user) => ({
   ...buildUserResponse(user),
   createdAt: user.createdAt,
+  walletBalance: Number(user.wallet?.balance || 0),
+  savedAddressCount: Array.isArray(user.savedAddresses) ? user.savedAddresses.length : 0,
+  paymentMethodCount: Array.isArray(user.paymentMethods) ? user.paymentMethods.length : 0,
 });
 
 const getTokenFromRequest = (req) => {
@@ -56,6 +60,33 @@ const listUsers = async (_req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Unable to load users' });
+  }
+};
+
+const updateUserStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const nextStatus = String(req.body.status || '').trim().toLowerCase();
+    const allowedStatuses = ['active', 'suspended'];
+
+    if (!allowedStatuses.includes(nextStatus)) {
+      return res.status(400).json({ message: 'status must be active or suspended' });
+    }
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.status = nextStatus;
+    await user.save();
+
+    return res.status(200).json({
+      message: 'User status updated',
+      user: buildUserManagementResponse(user),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to update user status' });
   }
 };
 
@@ -1003,6 +1034,7 @@ module.exports = {
   registerUser,
   loginUser,
   listUsers,
+  updateUserStatus,
   forgotPassword,
   requestPasswordResetOtp,
   resetPasswordWithOtp,

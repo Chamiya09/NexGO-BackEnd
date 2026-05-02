@@ -191,6 +191,11 @@ const userSchema = new mongoose.Schema(
         default: [],
       },
     },
+    status: {
+      type: String,
+      enum: ['active', 'suspended'],
+      default: 'active',
+    },
   },
   {
     timestamps: true,
