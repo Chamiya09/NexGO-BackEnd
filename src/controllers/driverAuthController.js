@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 
 const Driver = require('../models/Driver');
 const Ride = require('../models/Ride');
+const { emitDriverAccountStatus } = require('../sockets/rideSocket');
 
 const buildDriverResponse = (driver) => ({
   id: driver._id,
@@ -454,6 +455,11 @@ const updateDriverStatus = async (req, res) => {
     }
 
     await driver.save();
+
+    const io = req.app?.get?.('io');
+    if (io) {
+      emitDriverAccountStatus(io, driver._id, driver.status);
+    }
 
     return res.status(200).json({
       message: 'Driver status updated',

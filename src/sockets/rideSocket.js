@@ -280,6 +280,22 @@ function emitToPassenger(io, passengerId, eventName, payload) {
   return passengerSocketIds.size > 0;
 }
 
+function emitPassengerAccountStatus(io, passengerId, status) {
+  emitToPassenger(io, passengerId, 'passenger_account_status', {
+    passengerId: String(passengerId),
+    status,
+  });
+}
+
+function emitDriverAccountStatus(io, driverId, status) {
+  const socketId = driverSocketMap.get(String(driverId));
+  if (!socketId) return;
+  io.to(socketId).emit('driver_account_status', {
+    driverId: String(driverId),
+    status,
+  });
+}
+
 function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
   const payload = {
     rideId: ride._id.toString(),
@@ -337,6 +353,13 @@ function initRideSocket(io) {
       console.log(
           `[Socket.IO] Passenger registered: userId=${passengerId} -> socketId=${socket.id}`
       );
+    });
+
+    socket.on('registerDriver', (driverId) => {
+      const driverKey = String(driverId || '');
+      if (!driverKey) return;
+      driverSocketMap.set(driverKey, socket.id);
+      console.log(`[Socket.IO] Driver registered: driverId=${driverKey} -> socketId=${socket.id}`);
     });
 
     socket.on('updateDriverLocation', async ({ driverId, latitude, longitude, vehicleCategory, isOnline, heading }) => {
@@ -876,4 +899,9 @@ function initRideSocket(io) {
   });
 }
 
-module.exports = { initRideSocket, emitRemoveRideRequest };
+module.exports = {
+  initRideSocket,
+  emitRemoveRideRequest,
+  emitPassengerAccountStatus,
+  emitDriverAccountStatus,
+};

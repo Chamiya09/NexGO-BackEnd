@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 
 const User = require('../models/User');
 const { isEmailServiceConfigured, sendPasswordResetOtpEmail } = require('../services/emailService');
+const { emitPassengerAccountStatus } = require('../sockets/rideSocket');
 
 const PASSWORD_RESET_SUCCESS_MESSAGE = 'If an account exists, a password reset code has been sent.';
 const PASSWORD_RESET_OTP_LENGTH = Number(process.env.PASSWORD_RESET_OTP_LENGTH || 6);
@@ -80,6 +81,11 @@ const updateUserStatus = async (req, res) => {
 
     user.status = nextStatus;
     await user.save();
+
+    const io = req.app?.get?.('io');
+    if (io) {
+      emitPassengerAccountStatus(io, user._id, user.status);
+    }
 
     return res.status(200).json({
       message: 'User status updated',
