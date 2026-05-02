@@ -18,6 +18,7 @@ const buildDriverResponse = (driver) => ({
   documents: driver.documents || [],
   vehicle: driver.vehicle || null,
   security: driver.security || {},
+  totalCashedOut: driver.totalCashedOut || 0,
 });
 
 const buildPublicDriverResponse = (driver, stats = {}) => ({
@@ -763,6 +764,52 @@ const changeDriverPassword = async (req, res) => {
   }
 };
 
+const processDriverCheckout = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const amount = Number(req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid cashout amount' });
+    }
+
+    const [statsResult] = await Ride.aggregate([
+      {
+        $match: {
+          driverId: driver._id,
+          status: { $in: ['Completed', 'completed'] },
+        },
+      },
+      {
+        $group: {
+          _id: '$driverId',
+          totalEarned: { $sum: '$price' },
+        },
+      },
+    ]);
+
+    const totalEarned = statsResult?.totalEarned || 0;
+    const availableBalance = Math.max(0, totalEarned - (driver.totalCashedOut || 0));
+
+    if (amount > availableBalance) {
+      return res.status(400).json({ message: 'Insufficient available balance' });
+    }
+
+    driver.totalCashedOut = (driver.totalCashedOut || 0) + amount;
+    await driver.save();
+
+    return res.status(200).json({
+      message: 'Checkout successful',
+      driver: buildDriverResponse(driver),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to process checkout' });
+  }
+};
+
 module.exports = {
   registerDriver,
   loginDriver,
@@ -782,4 +829,5 @@ module.exports = {
   updateDriverSecurity,
   changeDriverPassword,
   logoutDriver,
+  processDriverCheckout,
 };

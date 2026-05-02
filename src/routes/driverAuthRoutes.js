@@ -18,6 +18,7 @@ const {
   updateDriverSecurity,
   changeDriverPassword,
   logoutDriver,
+  processDriverCheckout,
 } = require('../controllers/driverAuthController');
 const { requireAdmin } = require('../middleware/adminAuth');
 
@@ -40,5 +41,6 @@ router.patch('/me/vehicle', updateDriverVehicle);
 router.delete('/me/vehicle', deleteDriverVehicle);
 router.patch('/me/documents/:documentType', updateDriverDocument);
 router.patch('/me/security', updateDriverSecurity);
+router.post('/me/checkout', processDriverCheckout);
 
 module.exports = router;
