@@ -42,6 +42,12 @@ const getTokenFromRequest = (req) => {
   return authHeader.split(' ')[1];
 };
 
+const getSessionDriverId = (req) => {
+  if (!req?.session) return null;
+  if (req.session.role !== 'driver') return null;
+  return req.session.driverId || null;
+};
+
 const signDriverToken = (driver) =>
   jwt.sign(
     {
@@ -54,16 +60,21 @@ const signDriverToken = (driver) =>
 
 const getAuthenticatedDriver = async (req) => {
   const token = getTokenFromRequest(req);
-  if (!token) {
+  if (token) {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.role !== 'driver') {
+      return null;
+    }
+
+    return Driver.findById(decoded.id);
+  }
+
+  const sessionDriverId = getSessionDriverId(req);
+  if (!sessionDriverId) {
     return null;
   }
 
-  const decoded = jwt.verify(token, process.env.JWT_SECRET);
-  if (decoded.role !== 'driver') {
-    return null;
-  }
-
-  return Driver.findById(decoded.id);
+  return Driver.findById(sessionDriverId);
 };
 
 const normalizeEmail = (email = '') => String(email).trim().toLowerCase();
@@ -102,6 +113,10 @@ const registerDriver = async (req, res) => {
     });
 
     const token = signDriverToken(driver);
+    if (req.session) {
+      req.session.driverId = driver._id.toString();
+      req.session.role = 'driver';
+    }
 
     return res.status(201).json({
       message: 'Driver registered successfully',
@@ -149,6 +164,10 @@ const loginDriver = async (req, res) => {
     }
 
     const token = signDriverToken(driver);
+    if (req.session) {
+      req.session.driverId = driver._id.toString();
+      req.session.role = 'driver';
+    }
 
     return res.status(200).json({
       message: 'Driver login successful',
@@ -172,6 +191,33 @@ const getDriverMe = async (req, res) => {
   } catch (error) {
     return res.status(401).json({ message: 'Invalid or expired token' });
   }
+};
+
+const getDriverSession = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    return res.status(200).json({ driver: buildDriverResponse(driver) });
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid or expired session' });
+  }
+};
+
+const logoutDriver = async (req, res) => {
+  if (!req.session) {
+    return res.status(200).json({ message: 'Logged out' });
+  }
+
+  req.session.destroy((error) => {
+    if (error) {
+      return res.status(500).json({ message: 'Unable to log out' });
+    }
+
+    return res.status(200).json({ message: 'Logged out' });
+  });
 };
 
 const listDrivers = async (_req, res) => {
@@ -684,6 +730,7 @@ module.exports = {
   registerDriver,
   loginDriver,
   getDriverMe,
+  getDriverSession,
   getPublicDriverProfile,
   getRidePublicDriverProfile,
   listDrivers,
@@ -696,4 +743,5 @@ module.exports = {
   deleteDriverVehicle,
   updateDriverSecurity,
   changeDriverPassword,
+  logoutDriver,
 };

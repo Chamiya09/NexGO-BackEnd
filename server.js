@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
+const session = require('express-session');
 
 const connectDB = require('./src/config/db');
 const { initRideSocket } = require('./src/sockets/rideSocket');
@@ -29,6 +30,20 @@ app.set('io', io);
 // ── Express middleware ────────────────────────────────────────────────────────
 app.use(cors({ origin: '*' }));
 app.use(express.json());
+app.use(
+  session({
+    name: 'nexgo.sid',
+    secret: process.env.SESSION_SECRET || 'nexgo_session_secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: false,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  })
+);
 
 // ── Database ──────────────────────────────────────────────────────────────────
 connectDB();
