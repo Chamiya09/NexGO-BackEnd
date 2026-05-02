@@ -224,11 +224,20 @@ module.exports = {
 
 const Ride = require('../models/Ride');
 
+const ADMIN_COMMISSION_RATE = 0.05;
+
+const calculateAdminCommission = (amount) => {
+  const base = Number(amount || 0);
+  if (!Number.isFinite(base) || base <= 0) return 0;
+  return Number((base * ADMIN_COMMISSION_RATE).toFixed(2));
+};
+
 const getDashboardAnalytics = async (req, res) => {
   try {
     const rides = await Ride.find({});
     
     let totalRevenue = 0;
+    let totalCommission = 0;
     let activeRides = 0;
     let cancelledRides = 0;
     let totalWaitTime = 0;
@@ -236,7 +245,9 @@ const getDashboardAnalytics = async (req, res) => {
 
     rides.forEach(ride => {
       if (ride.status === 'Completed') {
-        totalRevenue += (ride.fare || 0);
+        const rideAmount = Number(ride.price || 0);
+        totalRevenue += Number.isFinite(rideAmount) ? rideAmount : 0;
+        totalCommission += calculateAdminCommission(rideAmount);
       }
       if (['Pending', 'Accepted', 'Arrived', 'InProgress'].includes(ride.status)) {
         activeRides++;
@@ -253,7 +264,13 @@ const getDashboardAnalytics = async (req, res) => {
 
     const waitTimeAvg = waitTimeCount > 0 ? (totalWaitTime / waitTimeCount).toFixed(1) : 0;
 
-    res.status(200).json({ totalRevenue, activeRides, cancelledRides, waitTimeAvg });
+    res.status(200).json({
+      totalRevenue,
+      totalCommission,
+      activeRides,
+      cancelledRides,
+      waitTimeAvg,
+    });
   } catch (error) {
     console.error('Error fetching analytics:', error);
     res.status(500).json({ message: 'Failed to fetch analytics', error: error.message });

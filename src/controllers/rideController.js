@@ -10,6 +10,14 @@ const {
   RIDE_STATUS,
 } = require('../services/rideLifecycleService');
 
+const ADMIN_COMMISSION_RATE = 0.05;
+
+const calculateAdminCommission = (amount) => {
+  const base = Number(amount || 0);
+  if (!Number.isFinite(base) || base <= 0) return 0;
+  return Number((base * ADMIN_COMMISSION_RATE).toFixed(2));
+};
+
 // ── Reusable auth helper (same pattern as authController.js) ──────────────────
 const getAuthenticatedUser = (req) => {
   const authHeader = req.headers.authorization;
@@ -96,6 +104,15 @@ const normalizeRide = (ride) => {
     acceptedAt: ride.acceptedAt ?? null,
     completedAt: ride.completedAt ?? null,
     review: normalizeReview(ride.review, ride._id),
+  };
+};
+
+const normalizeRideForAdmin = (ride) => {
+  const base = normalizeRide(ride);
+  return {
+    ...base,
+    adminCommissionRate: ADMIN_COMMISSION_RATE,
+    adminCommissionAmount: calculateAdminCommission(base.price),
   };
 };
 
@@ -357,7 +374,7 @@ const listTripsForAdmin = async (_req, res) => {
       .lean();
 
     return res.status(200).json({
-      trips: rides.map(normalizeRide),
+      trips: rides.map(normalizeRideForAdmin),
     });
   } catch (error) {
     console.error('[rideController] listTripsForAdmin error:', error);
