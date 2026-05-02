@@ -241,6 +241,12 @@ function calculateRideBasePrice({ vehicleType, pickup, dropoff }) {
   return Math.max(MINIMUM_FARE, Math.round(rawFare));
 }
 
+function isDriverKycApproved(driver) {
+  const documents = Array.isArray(driver?.documents) ? driver.documents : [];
+  if (documents.length === 0) return false;
+  return documents.every((doc) => doc?.status === 'approved');
+}
+
 function emitRemoveRideRequest(io, rideId, extra = {}) {
   io.emit('remove_ride_request', { rideId, ...extra });
   rideRecipientSocketMap.delete(String(rideId));
@@ -587,6 +593,15 @@ function initRideSocket(io) {
           socket.emit('rideError', {
             code: 'DRIVER_OFFLINE',
             message: 'Go online before accepting ride requests.',
+          });
+          return;
+        }
+
+        const driverProfile = await Driver.findById(driverId).select('documents').lean();
+        if (!isDriverKycApproved(driverProfile)) {
+          socket.emit('rideError', {
+            code: 'DRIVER_KYC_PENDING',
+            message: 'Upload and get approval for license, insurance, and registration to accept rides.',
           });
           return;
         }
