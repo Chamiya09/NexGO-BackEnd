@@ -89,6 +89,61 @@ const getAdminProfile = async (req, res) => {
   return res.status(200).json({ adminProfile: normalizeAdmin(req.admin) });
 };
 
+const listAdmins = async (_req, res) => {
+  try {
+    const admins = await Admin.find({}).sort({ createdAt: -1 });
+    return res.status(200).json({ admins: admins.map(normalizeAdmin) });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to load admins' });
+  }
+};
+
+const createAdmin = async (req, res) => {
+  try {
+    const fullName = String(req.body.fullName || '').trim();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const phoneNumber = String(req.body.phoneNumber || '').trim();
+    const password = String(req.body.password || '');
+    const role = String(req.body.role || '').trim();
+    const scope = String(req.body.scope || '').trim();
+    const office = String(req.body.office || '').trim();
+    const shift = String(req.body.shift || '').trim();
+    const profileImageUrl = String(req.body.profileImageUrl || '').trim();
+
+    if (!fullName || !email || !password) {
+      return res.status(400).json({ message: 'Full name, email, and password are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    const existingAdmin = await Admin.findOne({ email });
+    if (existingAdmin) {
+      return res.status(409).json({ message: 'Admin email is already registered' });
+    }
+
+    const admin = await Admin.create({
+      fullName,
+      email,
+      phoneNumber,
+      profileImageUrl,
+      password: await bcrypt.hash(password, 10),
+      role: role || 'Operations Admin',
+      scope: scope || 'NexGO Control Center',
+      office: office || 'Colombo HQ',
+      shift: shift || 'Full operations coverage',
+    });
+
+    return res.status(201).json({
+      message: 'Admin created successfully',
+      admin: normalizeAdmin(admin),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to create admin' });
+  }
+};
+
 const updateAdminProfile = async (req, res) => {
   try {
     const fullName = String(req.body.fullName || '').trim();
@@ -161,6 +216,8 @@ module.exports = {
   loginAdmin,
   getAdminSession,
   getAdminProfile,
+  listAdmins,
+  createAdmin,
   updateAdminProfile,
   changeAdminPassword,
 };
