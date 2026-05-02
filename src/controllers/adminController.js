@@ -11,6 +11,7 @@ const normalizeAdmin = (admin) => ({
   fullName: admin.fullName,
   email: admin.email,
   phoneNumber: admin.phoneNumber || '',
+  profileImageUrl: admin.profileImageUrl || '',
   role: admin.role || 'Operations Admin',
   scope: admin.scope || 'NexGO Control Center',
   office: admin.office || 'Colombo HQ',
@@ -39,6 +40,7 @@ const ensureDefaultAdmin = async () => {
     fullName: process.env.ADMIN_FULL_NAME || 'NexGO Operations Admin',
     email: adminEmail,
     phoneNumber: process.env.ADMIN_PHONE_NUMBER || '+94 77 000 0000',
+    profileImageUrl: process.env.ADMIN_PROFILE_IMAGE_URL || '',
     password: hashedPassword,
     role: process.env.ADMIN_ROLE || 'Operations Admin',
     scope: process.env.ADMIN_SCOPE || 'NexGO Control Center',
@@ -92,6 +94,7 @@ const updateAdminProfile = async (req, res) => {
     const fullName = String(req.body.fullName || '').trim();
     const email = String(req.body.email || '').trim().toLowerCase();
     const phoneNumber = String(req.body.phoneNumber || '').trim();
+    const profileImageUrl = String(req.body.profileImageUrl || '').trim();
     const role = String(req.body.role || req.admin.role || '').trim();
     const scope = String(req.body.scope || req.admin.scope || '').trim();
     const office = String(req.body.office || req.admin.office || '').trim();
@@ -109,6 +112,7 @@ const updateAdminProfile = async (req, res) => {
     req.admin.fullName = fullName;
     req.admin.email = email;
     req.admin.phoneNumber = phoneNumber;
+    req.admin.profileImageUrl = profileImageUrl;
     req.admin.role = role || 'Operations Admin';
     req.admin.scope = scope || 'NexGO Control Center';
     req.admin.office = office || 'Colombo HQ';

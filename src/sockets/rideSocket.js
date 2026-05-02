@@ -3,6 +3,7 @@
 
 const Ride = require('../models/Ride');
 const Driver = require('../models/Driver');
+const User = require('../models/User');
 const Promotion = require('../models/Promotion');
 const {
   RIDE_STATUS,
@@ -494,10 +495,12 @@ function initRideSocket(io) {
           status: RIDE_STATUS.PENDING,
         });
 
+        const passenger = await User.findById(passengerId).select('profileImageUrl').lean();
         const rideData = {
           rideId: ride._id.toString(),
           passengerId,
           passengerName: passengerName ?? 'Passenger',
+          passengerImage: passenger?.profileImageUrl || '',
           vehicleType: requestedVehicleType,
           price: ridePrice,
           promotion: promotionUsage.promotionSnapshot
@@ -581,12 +584,13 @@ function initRideSocket(io) {
 
         emitRemoveRideRequest(io, rideId, { reason: 'accepted', acceptedByDriverId: driverId });
 
-        const driver = await Driver.findById(driverId).select('fullName phoneNumber vehicle').lean();
+        const driver = await Driver.findById(driverId).select('fullName phoneNumber profileImageUrl vehicle').lean();
         const driverLocation = getDriverLocationById(driverId);
         const acceptanceData = {
           rideId: ride._id.toString(),
           driverId,
           driverName: driver?.fullName || 'Driver',
+          driverImage: driver?.profileImageUrl || '',
           driverPhoneNumber: driver?.phoneNumber || '',
           driverVehicle: driver?.vehicle || null,
           driverLocation: driverLocation

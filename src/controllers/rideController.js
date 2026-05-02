@@ -413,6 +413,7 @@ const normalizeAdminReview = (ride) => {
           fullName: ride.passengerId.fullName ?? 'Passenger',
           email: ride.passengerId.email ?? '',
           phoneNumber: ride.passengerId.phoneNumber ?? '',
+          profileImageUrl: ride.passengerId.profileImageUrl ?? '',
         }
       : null,
     driver: normalizeDriver(ride.driverId),
@@ -459,7 +460,7 @@ const listRideReviewsForAdmin = async (req, res) => {
 
     const rides = await Ride.find(query)
       .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
-      .populate('passengerId', 'fullName email phoneNumber')
+      .populate('passengerId', 'fullName email phoneNumber profileImageUrl')
       .sort({ 'review.submittedAt': -1, 'review.reviewedAt': -1, createdAt: -1 })
       .limit(100)
       .lean();

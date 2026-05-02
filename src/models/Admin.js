@@ -19,6 +19,11 @@ const adminSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    profileImageUrl: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     password: {
       type: String,
       required: true,
