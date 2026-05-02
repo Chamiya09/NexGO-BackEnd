@@ -126,6 +126,24 @@ const normalizeSavedAddress = (address) => ({
   isDefault: Boolean(address.isDefault),
 });
 
+const normalizeWalletTransaction = (transaction) => ({
+  _id: transaction._id,
+  type: transaction.type,
+  amount: Number(transaction.amount || 0),
+  balanceAfter: Number(transaction.balanceAfter || 0),
+  paymentMethodId: transaction.paymentMethodId || null,
+  description: transaction.description || '',
+  createdAt: transaction.createdAt,
+});
+
+const normalizeWallet = (wallet = {}) => ({
+  balance: Number(wallet.balance || 0),
+  transactions: (wallet.transactions || [])
+    .slice()
+    .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
+    .map(normalizeWalletTransaction),
+});
+
 const registerUser = async (req, res) => {
   try {
     const { fullName, email, phoneNumber, password, profileImageUrl } = req.body;
@@ -621,6 +639,21 @@ const getPaymentMethods = async (req, res) => {
   }
 };
 
+const getWallet = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    return res.status(200).json({
+      wallet: normalizeWallet(user.wallet),
+    });
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+};
+
 const getSavedAddresses = async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
@@ -768,6 +801,99 @@ const deleteSavedAddress = async (req, res) => {
   }
 };
 
+const topUpWallet = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const amount = Number(req.body.amount);
+    const paymentMethodId = String(req.body.paymentMethodId || '').trim();
+    const cardNumber = normalizeCardNumber(req.body.cardNumber);
+    const expiryMonth = String(req.body.expiryMonth || '').trim();
+    const expiryYear = String(req.body.expiryYear || '').trim();
+    const cardholderName = String(req.body.cardholderName || '').trim();
+
+    if (!Number.isFinite(amount) || amount < 100) {
+      return res.status(400).json({ message: 'Top up amount must be at least LKR 100.' });
+    }
+
+    if (amount > 100000) {
+      return res.status(400).json({ message: 'Top up amount cannot exceed LKR 100,000.' });
+    }
+
+    let paymentMethod = null;
+    let paymentDescription = '';
+
+    if (paymentMethodId) {
+      paymentMethod = (user.paymentMethods || []).find(
+        (method) => String(method._id) === paymentMethodId
+      );
+
+      if (!paymentMethod) {
+        return res.status(404).json({ message: 'Payment method not found' });
+      }
+
+      paymentDescription = `Top up from ${paymentMethod.brand} ending ${paymentMethod.last4}`;
+    } else {
+      if (!cardholderName || !cardNumber || !expiryMonth || !expiryYear) {
+        return res.status(400).json({
+          message: 'cardholderName, cardNumber, expiryMonth, and expiryYear are required',
+        });
+      }
+
+      if (cardNumber.length < 12 || cardNumber.length > 19) {
+        return res.status(400).json({ message: 'Card number must be between 12 and 19 digits' });
+      }
+
+      if (!/^(0?[1-9]|1[0-2])$/.test(expiryMonth)) {
+        return res.status(400).json({ message: 'Expiry month must be between 1 and 12' });
+      }
+
+      if (!/^\d{2,4}$/.test(expiryYear)) {
+        return res.status(400).json({ message: 'Expiry year must be 2 or 4 digits' });
+      }
+
+      paymentDescription = `Top up from ${detectCardBrand(cardNumber)} ending ${cardNumber.slice(-4)}`;
+    }
+
+    if (!user.wallet) {
+      user.wallet = { balance: 0, transactions: [] };
+    }
+
+    user.wallet.transactions = user.wallet.transactions || [];
+
+    const currentBalance = Number(user.wallet.balance || 0);
+    const nextBalance = currentBalance + amount;
+
+    user.wallet.balance = nextBalance;
+    user.wallet.transactions.push({
+      type: 'topup',
+      amount,
+      balanceAfter: nextBalance,
+      paymentMethodId: paymentMethod?._id || null,
+      description: paymentDescription,
+      createdAt: new Date(),
+    });
+
+    if (user.wallet.transactions.length > 50) {
+      user.wallet.transactions = user.wallet.transactions.slice(-50);
+    }
+
+    await user.save();
+
+    return res.status(200).json({
+      message: 'Wallet topped up successfully',
+      wallet: normalizeWallet(user.wallet),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || 'Unable to top up wallet',
+    });
+  }
+};
+
 const addPaymentMethod = async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
@@ -889,6 +1015,8 @@ module.exports = {
   setDefaultSavedAddress,
   deleteSavedAddress,
   getPaymentMethods,
+  getWallet,
   addPaymentMethod,
+  topUpWallet,
   setDefaultPaymentMethod,
 };

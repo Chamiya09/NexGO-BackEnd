@@ -18,7 +18,9 @@ const {
   setDefaultSavedAddress,
   deleteSavedAddress,
   getPaymentMethods,
+  getWallet,
   addPaymentMethod,
+  topUpWallet,
   setDefaultPaymentMethod,
 } = require('../controllers/authController');
 const { requireAdmin } = require('../middleware/adminAuth');
@@ -54,5 +56,7 @@ router.delete('/saved-addresses/:addressId', deleteSavedAddress);
 router.get('/payment-methods', getPaymentMethods);
 router.post('/payment-methods', addPaymentMethod);
 router.patch('/payment-methods/:paymentMethodId/default', setDefaultPaymentMethod);
+router.get('/wallet', getWallet);
+router.post('/wallet/top-up', topUpWallet);
 
 module.exports = router;
