@@ -499,7 +499,7 @@ function initRideSocket(io) {
       }
 
       try {
-        const { passengerId, passengerName, vehicleType, price, pickup, dropoff, promotion } = payload;
+        const { passengerId, passengerName, vehicleType, price, pickup, dropoff, promotion, paymentMethod } = payload;
         registerPassengerSocket(socket, passengerId);
         const requestedVehicleType = normalizeVehicleCategory(vehicleType);
 
@@ -577,6 +577,7 @@ function initRideSocket(io) {
           dropoff,
           ...(promotionUsage.promotionSnapshot && { promotion: promotionUsage.promotionSnapshot }),
           status: RIDE_STATUS.PENDING,
+          paymentMethod: paymentMethod === 'WALLET' ? 'WALLET' : 'CASH',
         });
 
         const passenger = await User.findById(passengerId).select('profileImageUrl').lean();
@@ -587,6 +588,7 @@ function initRideSocket(io) {
           passengerImage: passenger?.profileImageUrl || '',
           vehicleType: requestedVehicleType,
           price: ridePrice,
+          paymentMethod: paymentMethod === 'WALLET' ? 'WALLET' : 'CASH',
           promotion: promotionUsage.promotionSnapshot
             ? {
                 code: promotionUsage.promotionSnapshot.code,

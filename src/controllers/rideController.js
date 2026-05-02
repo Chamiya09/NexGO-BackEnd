@@ -88,6 +88,7 @@ const normalizeRide = (ride) => {
     dropoff: ride.dropoff,
     vehicleType: ride.vehicleType,
     price: ride.price,
+    paymentMethod: ride.paymentMethod || 'CASH',
     promotion: ride.promotion?.promotionId
       ? {
           id: ride.promotion.promotionId?.toString?.() ?? null,
@@ -316,42 +317,48 @@ const confirmRidePayment = async (req, res) => {
       return res.status(400).json({ message: 'Invalid ride amount.' });
     }
 
-    const user = await User.findById(decoded.id);
-    if (!user) {
-      return res.status(404).json({ message: 'Passenger not found' });
-    }
+    let nextBalance = null;
 
-    if (!user.wallet) {
-      user.wallet = { balance: 0, transactions: [] };
-    }
-    if (!Array.isArray(user.wallet.transactions)) {
-      user.wallet.transactions = [];
-    }
+    if (ride.paymentMethod === 'WALLET') {
+      const user = await User.findById(decoded.id);
+      if (!user) {
+        return res.status(404).json({ message: 'Passenger not found' });
+      }
 
-    const balance = Number(user.wallet.balance || 0);
-    if (balance < amount) {
-      return res.status(400).json({ message: 'Insufficient wallet balance.' });
-    }
+      if (!user.wallet) {
+        user.wallet = { balance: 0, transactions: [] };
+      }
+      if (!Array.isArray(user.wallet.transactions)) {
+        user.wallet.transactions = [];
+      }
 
-    const nextBalance = balance - amount;
-    user.wallet.balance = nextBalance;
-    user.wallet.transactions.push({
-      type: 'ride_payment',
-      amount,
-      balanceAfter: nextBalance,
-      description: `Ride payment ${ride._id.toString().slice(-6).toUpperCase()}`,
-    });
+      const balance = Number(user.wallet.balance || 0);
+      if (balance < amount) {
+        return res.status(400).json({ message: 'Insufficient wallet balance.' });
+      }
+
+      nextBalance = balance - amount;
+      user.wallet.balance = nextBalance;
+      user.wallet.transactions.push({
+        type: 'ride_payment',
+        amount,
+        balanceAfter: nextBalance,
+        description: `Ride payment ${ride._id.toString().slice(-6).toUpperCase()}`,
+      });
+
+      ride.walletBalanceAfter = nextBalance;
+      await user.save();
+    }
 
     ride.paymentStatus = 'PAID';
     ride.paymentConfirmedAt = new Date();
-    ride.walletBalanceAfter = nextBalance;
 
-    await Promise.all([user.save(), ride.save()]);
+    await ride.save();
 
     return res.status(200).json({
       message: 'Payment confirmed.',
       ride: normalizeRide(ride),
-      wallet: { balance: nextBalance },
+      ...(nextBalance !== null && { wallet: { balance: nextBalance } }),
     });
   } catch (error) {
     if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
