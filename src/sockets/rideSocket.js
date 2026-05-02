@@ -11,6 +11,8 @@ const {
   transitionRideById,
 } = require('../services/rideLifecycleService');
 
+const DISABLE_DRIVER_REQUESTS = true;
+
 // -- In-memory registries -------------------------------------------------------
 
 /**
@@ -443,6 +445,14 @@ function initRideSocket(io) {
     socket.on('requestRide', async (payload) => {
       console.log('[Socket.IO] requestRide received:', payload);
 
+      if (DISABLE_DRIVER_REQUESTS) {
+        socket.emit('rideError', {
+          code: 'DRIVER_REQUESTS_DISABLED',
+          message: 'Driver requests are temporarily disabled.',
+        });
+        return;
+      }
+
       try {
         const { passengerId, passengerName, vehicleType, price, pickup, dropoff, promotion } = payload;
         registerPassengerSocket(socket, passengerId);
@@ -585,6 +595,14 @@ function initRideSocket(io) {
 
     socket.on('acceptRide', async (payload) => {
       console.log('[Socket.IO] acceptRide received:', payload);
+
+      if (DISABLE_DRIVER_REQUESTS) {
+        socket.emit('rideError', {
+          code: 'DRIVER_REQUESTS_DISABLED',
+          message: 'Driver requests are temporarily disabled.',
+        });
+        return;
+      }
 
       try {
         const { rideId, driverId } = payload;
