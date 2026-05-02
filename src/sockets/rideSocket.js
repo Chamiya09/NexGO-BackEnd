@@ -48,13 +48,14 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
 const DRIVER_DISPLAY_RADIUS_KM = 2;
 const DRIVER_REQUEST_RADIUS_KM = 2;
 const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
-const VEHICLE_BASE_PRICES = {
-  Bike: 850,
-  Tuk: 1115,
-  Mini: 1301,
-  Car: 1450,
-  Van: 2100,
+const VEHICLE_PER_KM_RATES = {
+  Bike: 70,
+  Tuk: 150,
+  Mini: 300,
+  Car: 350,
+  Van: 1250,
 };
+const MINIMUM_FARE = 0;
 const rideRecipientSocketMap = new Map();
 const PASSENGER_ROOM_PREFIX = 'passenger:';
 
@@ -168,7 +169,7 @@ async function buildPromotionUsage({ passengerId, requestedVehicleType, payloadP
   const requestedPromotionId = payloadPromotion?.id || payloadPromotion?.promotionId;
   const requestedPromotionCode = String(payloadPromotion?.code || '').trim().toUpperCase();
 
-  const originalPrice = VEHICLE_BASE_PRICES[requestedVehicleType] ?? Number(fallbackPrice);
+  const originalPrice = Number(fallbackPrice);
   const safeOriginalPrice = Number.isFinite(originalPrice) && originalPrice > 0 ? originalPrice : 0;
 
   if (!requestedPromotionId && !requestedPromotionCode) {
@@ -222,6 +223,22 @@ async function buildPromotionUsage({ passengerId, requestedVehicleType, payloadP
       originalPrice: safeOriginalPrice,
     },
   };
+}
+
+function calculateRideBasePrice({ vehicleType, pickup, dropoff }) {
+  if (!hasValidCoords(pickup) || !hasValidCoords(dropoff)) {
+    return 0;
+  }
+
+  const rate = VEHICLE_PER_KM_RATES[vehicleType] ?? 0;
+  const distanceKm = haversineDistanceKm(
+    Number(pickup.latitude),
+    Number(pickup.longitude),
+    Number(dropoff.latitude),
+    Number(dropoff.longitude)
+  );
+  const rawFare = Number.isFinite(distanceKm) ? distanceKm * rate : 0;
+  return Math.max(MINIMUM_FARE, Math.round(rawFare));
 }
 
 function emitRemoveRideRequest(io, rideId, extra = {}) {
@@ -433,11 +450,17 @@ function initRideSocket(io) {
           return;
         }
 
+        const basePrice = calculateRideBasePrice({
+          vehicleType: requestedVehicleType,
+          pickup,
+          dropoff,
+        });
+
         const promotionUsage = await buildPromotionUsage({
           passengerId,
           requestedVehicleType,
           payloadPromotion: promotion,
-          fallbackPrice: price,
+          fallbackPrice: Number.isFinite(basePrice) && basePrice > 0 ? basePrice : price,
         });
 
         if (promotionUsage.error) {
