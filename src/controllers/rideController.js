@@ -88,6 +88,8 @@ const normalizeRide = (ride) => {
     dropoff: ride.dropoff,
     vehicleType: ride.vehicleType,
     price: ride.price,
+    adminCommission: ride.adminCommission ?? calculateAdminCommission(ride.price),
+    driverEarnings: ride.driverEarnings ?? Math.max(0, ride.price - calculateAdminCommission(ride.price)),
     paymentMethod: ride.paymentMethod || 'CASH',
     promotion: ride.promotion?.promotionId
       ? {
@@ -397,4 +399,5 @@ module.exports = {
   cancelRide,
   confirmRidePayment,
   listTripsForAdmin,
+  calculateAdminCommission,
 };

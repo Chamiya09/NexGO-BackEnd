@@ -786,7 +786,15 @@ const processDriverCheckout = async (req, res) => {
       {
         $group: {
           _id: '$driverId',
-          totalEarned: { $sum: '$price' },
+          totalEarned: {
+            $sum: {
+              $cond: [
+                { $gt: ['$driverEarnings', 0] },
+                '$driverEarnings',
+                { $subtract: ['$price', { $multiply: ['$price', 0.05] }] }
+              ]
+            }
+          },
         },
       },
     ]);

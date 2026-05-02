@@ -569,10 +569,15 @@ function initRideSocket(io) {
           return;
         }
 
+        const adminCommission = Math.max(0, Math.round(ridePrice * 0.05));
+        const driverEarnings = Math.max(0, ridePrice - adminCommission);
+
         const ride = await Ride.create({
           passengerId,
           vehicleType: requestedVehicleType,
           price: ridePrice,
+          adminCommission,
+          driverEarnings,
           pickup,
           dropoff,
           ...(promotionUsage.promotionSnapshot && { promotion: promotionUsage.promotionSnapshot }),

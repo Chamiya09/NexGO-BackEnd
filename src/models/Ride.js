@@ -73,6 +73,14 @@ const rideSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    adminCommission: {
+      type: Number,
+      default: 0,
+    },
+    driverEarnings: {
+      type: Number,
+      default: 0,
+    },
     promotion: {
       promotionId: {
         type: mongoose.Schema.Types.ObjectId,
