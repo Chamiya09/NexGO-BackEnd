@@ -420,10 +420,32 @@ function initRideSocket(io) {
       }
     });
 
-    socket.on('get_available_drivers', ({ category, latitude, longitude }) => {
+    socket.on('get_available_drivers', async ({ category, latitude, longitude }) => {
       const available = [];
       const requestedCategory = normalizeVehicleCategory(category);
-      for (const { location } of getOnlineDriverLocations(requestedCategory)) {
+      const candidates = getOnlineDriverLocations(requestedCategory);
+      const driverIds = candidates
+        .map(({ location }) => String(location?.driverId || ''))
+        .filter((id) => id.length > 0);
+      const approvedDrivers = new Set();
+
+      if (driverIds.length > 0) {
+        try {
+          const drivers = await Driver.find({ _id: { $in: driverIds } })
+            .select('documents')
+            .lean();
+          for (const driver of drivers) {
+            if (isDriverKycApproved(driver)) {
+              approvedDrivers.add(String(driver._id));
+            }
+          }
+        } catch (error) {
+          console.error('[Socket.IO] get_available_drivers error:', error.message);
+        }
+      }
+
+      for (const { location } of candidates) {
+        if (!approvedDrivers.has(String(location?.driverId || ''))) continue;
         const hasPassengerCoords = Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
         if (hasPassengerCoords) {
           const dist = haversineDistanceKm(
