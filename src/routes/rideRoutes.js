@@ -4,16 +4,18 @@ const { requireAdmin } = require('../middleware/adminAuth');
 const {
   getMyRides,
   getDriverRides,
-  listRideReviewsForDriver,
   getRideById,
   getArrivalCode,
   cancelRide,
+  listTripsForAdmin,
+} = require('../controllers/rideController');
+const {
+  listRideReviewsForDriver,
   submitRideReview,
   deleteRideReview,
-  listTripsForAdmin,
   listRideReviewsForAdmin,
   moderateRideReview,
-} = require('../controllers/rideController');
+} = require('../controllers/reviewController');
 const {
   getPublicDriverProfile,
   getRidePublicDriverProfile,

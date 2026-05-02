@@ -47,6 +47,7 @@ app.use('/api/driver-auth', require('./src/routes/driverAuthRoutes'));
 app.use('/api/admin', require('./src/routes/adminRoutes'));
 app.use('/api/upload', require('./src/routes/uploadRoutes'));
 app.use('/api/rides', require('./src/routes/rideRoutes'));
+app.use('/api/reviews', require('./src/routes/reviewRoutes'));
 app.use('/api/promotions', require('./src/routes/promotionRoutes'));
 app.use('/api/support-tickets', require('./src/routes/supportTicketRoutes'));
 
