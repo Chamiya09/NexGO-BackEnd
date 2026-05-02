@@ -11,7 +11,7 @@ const {
   transitionRideById,
 } = require('../services/rideLifecycleService');
 
-const DISABLE_DRIVER_REQUESTS = true;
+const DISABLE_DRIVER_REQUESTS = false;
 
 // -- In-memory registries -------------------------------------------------------
 
