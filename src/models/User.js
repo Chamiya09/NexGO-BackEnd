@@ -80,6 +80,10 @@ const savedAddressSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    showOnRidePage: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     _id: true,

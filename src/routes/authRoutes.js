@@ -18,6 +18,7 @@ const {
   addSavedAddress,
   setDefaultSavedAddress,
   deleteSavedAddress,
+  toggleSavedAddressVisibility,
   getPaymentMethods,
   getWallet,
   addPaymentMethod,
@@ -54,6 +55,7 @@ router.delete('/me', deleteMe);
 router.get('/saved-addresses', getSavedAddresses);
 router.post('/saved-addresses', addSavedAddress);
 router.patch('/saved-addresses/:addressId/default', setDefaultSavedAddress);
+router.patch('/saved-addresses/:addressId/visibility', toggleSavedAddressVisibility);
 router.delete('/saved-addresses/:addressId', deleteSavedAddress);
 router.get('/payment-methods', getPaymentMethods);
 router.post('/payment-methods', addPaymentMethod);

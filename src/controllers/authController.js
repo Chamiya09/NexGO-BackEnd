@@ -161,6 +161,7 @@ const normalizeSavedAddress = (address) => ({
   longitude: address.longitude,
   note: address.note || '',
   isDefault: Boolean(address.isDefault),
+  showOnRidePage: Boolean(address.showOnRidePage),
 });
 
 const normalizeWalletTransaction = (transaction) => ({
@@ -742,6 +743,9 @@ const addSavedAddress = async (req, res) => {
       }));
     }
 
+    const currentlyShownCount = (user.savedAddresses || []).filter(a => a.showOnRidePage).length;
+    const shouldShowOnRidePage = currentlyShownCount < 4;
+
     user.savedAddresses.push({
       label,
       title,
@@ -750,6 +754,7 @@ const addSavedAddress = async (req, res) => {
       longitude,
       note,
       isDefault: shouldSetDefault,
+      showOnRidePage: shouldShowOnRidePage,
     });
 
     await user.save();
@@ -834,6 +839,51 @@ const deleteSavedAddress = async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       message: error.message || 'Unable to delete saved address',
+    });
+  }
+};
+
+const toggleSavedAddressVisibility = async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { addressId } = req.params;
+    const savedAddresses = user.savedAddresses || [];
+    const targetAddress = savedAddresses.find((address) => String(address._id) === addressId);
+
+    if (!targetAddress) {
+      return res.status(404).json({ message: 'Saved address not found' });
+    }
+
+    const isCurrentlyVisible = Boolean(targetAddress.showOnRidePage);
+
+    // Enforce max 4 addresses visible at once
+    if (!isCurrentlyVisible) {
+      const currentlyShownCount = savedAddresses.filter((a) => a.showOnRidePage).length;
+      if (currentlyShownCount >= 4) {
+        return res.status(400).json({
+          message: 'You can only show up to 4 addresses at a time. Turn off another address first.',
+        });
+      }
+    }
+
+    user.savedAddresses = savedAddresses.map((address) => ({
+      ...address.toObject(),
+      showOnRidePage: String(address._id) === addressId ? !isCurrentlyVisible : Boolean(address.showOnRidePage),
+    }));
+
+    await user.save();
+
+    return res.status(200).json({
+      message: isCurrentlyVisible ? 'Address hidden from ride page' : 'Address shown on ride page',
+      savedAddresses: (user.savedAddresses || []).map(normalizeSavedAddress),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || 'Unable to update address visibility',
     });
   }
 };
@@ -1052,6 +1102,7 @@ module.exports = {
   addSavedAddress,
   setDefaultSavedAddress,
   deleteSavedAddress,
+  toggleSavedAddressVisibility,
   getPaymentMethods,
   getWallet,
   addPaymentMethod,
