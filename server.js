@@ -49,6 +49,10 @@ app.use(
 connectDB();
 
 // ── REST routes ───────────────────────────────────────────────────────────────
+app.get('/', (_req, res) => {
+  return res.status(200).json({ message: 'NexGO API is successfully running! 🚀' });
+});
+
 app.get('/health', (_req, res) => {
   return res.status(200).json({ status: 'ok', service: 'nexgo-backend' });
 });
