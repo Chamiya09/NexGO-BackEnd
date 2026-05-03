@@ -367,18 +367,36 @@ function initRideSocket(io) {
   io.on('connection', (socket) => {
     console.log(`[Socket.IO] Client connected: ${socket.id}`);
 
-    socket.on('registerPassenger', (passengerId) => {
+    socket.on('registerPassenger', async (passengerId) => {
       registerPassengerSocket(socket, passengerId);
       console.log(
           `[Socket.IO] Passenger registered: userId=${passengerId} -> socketId=${socket.id}`
       );
+
+      try {
+        const passenger = await User.findById(passengerId).select('status').lean();
+        if (passenger?.status) {
+          emitPassengerAccountStatus(io, passengerId, passenger.status);
+        }
+      } catch (error) {
+        console.error('[Socket.IO] Unable to emit passenger account status:', error.message);
+      }
     });
 
-    socket.on('registerDriver', (driverId) => {
+    socket.on('registerDriver', async (driverId) => {
       const driverKey = String(driverId || '');
       if (!driverKey) return;
       registerDriverSocket(socket, driverKey);
       console.log(`[Socket.IO] Driver registered: driverId=${driverKey} -> socketId=${socket.id}`);
+
+      try {
+        const driver = await Driver.findById(driverKey).select('status').lean();
+        if (driver?.status) {
+          emitDriverAccountStatus(io, driverKey, driver.status);
+        }
+      } catch (error) {
+        console.error('[Socket.IO] Unable to emit driver account status:', error.message);
+      }
     });
 
     socket.on('updateDriverLocation', async ({ driverId, latitude, longitude, vehicleCategory, isOnline, heading }) => {
