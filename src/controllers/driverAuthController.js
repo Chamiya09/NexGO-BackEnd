@@ -6,6 +6,8 @@ const Driver = require('../models/Driver');
 const Ride = require('../models/Ride');
 const { emitDriverAccountStatus } = require('../sockets/rideSocket');
 
+const ADMIN_COMMISSION_RATE = 0.2;
+
 const buildDriverResponse = (driver) => ({
   id: driver._id,
   fullName: driver.fullName,
@@ -791,7 +793,7 @@ const processDriverCheckout = async (req, res) => {
               $cond: [
                 { $gt: ['$driverEarnings', 0] },
                 '$driverEarnings',
-                { $subtract: ['$price', { $multiply: ['$price', 0.05] }] }
+                { $subtract: ['$price', { $multiply: ['$price', ADMIN_COMMISSION_RATE] }] }
               ]
             }
           },

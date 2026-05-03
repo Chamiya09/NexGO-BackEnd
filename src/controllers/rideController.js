@@ -10,7 +10,7 @@ const {
   RIDE_STATUS,
 } = require('../services/rideLifecycleService');
 
-const ADMIN_COMMISSION_RATE = 0.05;
+const ADMIN_COMMISSION_RATE = 0.2;
 
 const calculateAdminCommission = (amount) => {
   const base = Number(amount || 0);
@@ -33,8 +33,12 @@ const normalizeDriver = (driver) => {
   return {
     id: driver._id?.toString?.() ?? driver.toString?.() ?? null,
     fullName: driver.fullName ?? '',
+    email: driver.email ?? '',
     phoneNumber: driver.phoneNumber ?? '',
+    emergencyContact: driver.emergencyContact ?? '',
     profileImageUrl: driver.profileImageUrl ?? '',
+    status: driver.status ?? '',
+    isOnline: Boolean(driver.isOnline),
     vehicle: driver.vehicle
       ? {
           make: driver.vehicle.make ?? '',
@@ -42,6 +46,8 @@ const normalizeDriver = (driver) => {
           plateNumber: driver.vehicle.plateNumber ?? '',
           color: driver.vehicle.color ?? '',
           category: driver.vehicle.category ?? '',
+          year: driver.vehicle.year ?? null,
+          seats: driver.vehicle.seats ?? null,
         }
       : null,
   };
@@ -56,6 +62,7 @@ const normalizePassenger = (passenger) => {
     email: passenger.email ?? '',
     phoneNumber: passenger.phoneNumber ?? '',
     profileImageUrl: passenger.profileImageUrl ?? '',
+    status: passenger.status ?? '',
   };
 };
 
@@ -157,7 +164,7 @@ const getDriverRides = async (req, res) => {
 
     const rides = await Ride.find({ driverId: decoded.id })
       .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
-      .populate('passengerId', 'fullName email phoneNumber profileImageUrl')
+      .populate('passengerId', 'fullName email phoneNumber profileImageUrl status')
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
@@ -376,8 +383,8 @@ const confirmRidePayment = async (req, res) => {
 const listTripsForAdmin = async (_req, res) => {
   try {
     const rides = await Ride.find()
-      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
-      .populate('passengerId', 'fullName email phoneNumber profileImageUrl')
+      .populate('driverId', 'fullName email phoneNumber emergencyContact profileImageUrl status isOnline vehicle')
+      .populate('passengerId', 'fullName email phoneNumber profileImageUrl status')
       .sort({ createdAt: -1 })
       .limit(150)
       .lean();

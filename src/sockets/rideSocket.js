@@ -57,6 +57,7 @@ const VEHICLE_PER_KM_RATES = {
   Car: 350,
   Van: 1250,
 };
+const ADMIN_COMMISSION_RATE = 0.2;
 const MINIMUM_FARE = 0;
 const rideRecipientSocketMap = new Map();
 const PASSENGER_ROOM_PREFIX = 'passenger:';
@@ -569,7 +570,7 @@ function initRideSocket(io) {
           return;
         }
 
-        const adminCommission = Math.max(0, Math.round(ridePrice * 0.05));
+        const adminCommission = Math.max(0, Math.round(ridePrice * ADMIN_COMMISSION_RATE));
         const driverEarnings = Math.max(0, ridePrice - adminCommission);
 
         const ride = await Ride.create({

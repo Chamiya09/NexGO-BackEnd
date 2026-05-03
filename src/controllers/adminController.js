@@ -226,7 +226,7 @@ const Ride = require('../models/Ride');
 const Driver = require('../models/Driver');
 const { SupportTicket } = require('../models/SupportTicket');
 
-const ADMIN_COMMISSION_RATE = 0.05;
+const ADMIN_COMMISSION_RATE = 0.2;
 
 const calculateAdminCommission = (amount) => {
   const base = Number(amount || 0);
