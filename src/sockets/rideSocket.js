@@ -61,9 +61,14 @@ const ADMIN_COMMISSION_RATE = 0.2;
 const MINIMUM_FARE = 0;
 const rideRecipientSocketMap = new Map();
 const PASSENGER_ROOM_PREFIX = 'passenger:';
+const DRIVER_ROOM_PREFIX = 'driver:';
 
 function getPassengerRoom(passengerId) {
   return `${PASSENGER_ROOM_PREFIX}${String(passengerId)}`;
+}
+
+function getDriverRoom(driverId) {
+  return `${DRIVER_ROOM_PREFIX}${String(driverId)}`;
 }
 
 function normalizeVehicleCategory(category) {
@@ -269,6 +274,14 @@ function registerPassengerSocket(socket, passengerId) {
   socket.join(getPassengerRoom(passengerKey));
 }
 
+function registerDriverSocket(socket, driverId) {
+  const driverKey = String(driverId || '');
+  if (!driverKey) return;
+
+  driverSocketMap.set(driverKey, socket.id);
+  socket.join(getDriverRoom(driverKey));
+}
+
 function emitToPassenger(io, passengerId, eventName, payload) {
   const passengerSocketIds = getPassengerSocketIds(passengerId);
 
@@ -289,10 +302,15 @@ function emitPassengerAccountStatus(io, passengerId, status) {
 }
 
 function emitDriverAccountStatus(io, driverId, status) {
-  const socketId = driverSocketMap.get(String(driverId));
-  if (!socketId) return;
-  io.to(socketId).emit('driver_account_status', {
-    driverId: String(driverId),
+  const driverKey = String(driverId);
+  const socketId = driverSocketMap.get(driverKey);
+
+  if (!socketId) {
+    console.warn(`[Socket.IO] Driver socket not found for driverId=${driverKey}`);
+  }
+
+  io.to(getDriverRoom(driverKey)).emit('driver_account_status', {
+    driverId: driverKey,
     status,
   });
 }
@@ -359,7 +377,7 @@ function initRideSocket(io) {
     socket.on('registerDriver', (driverId) => {
       const driverKey = String(driverId || '');
       if (!driverKey) return;
-      driverSocketMap.set(driverKey, socket.id);
+      registerDriverSocket(socket, driverKey);
       console.log(`[Socket.IO] Driver registered: driverId=${driverKey} -> socketId=${socket.id}`);
     });
 
@@ -381,7 +399,7 @@ function initRideSocket(io) {
         if (previousSocketId && previousSocketId !== socket.id) {
           driverLocationMap.delete(previousSocketId);
         }
-        driverSocketMap.set(normalizedDriverId, socket.id);
+        registerDriverSocket(socket, normalizedDriverId);
       }
 
       const previousLocation = driverLocationMap.get(socket.id);
