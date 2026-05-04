@@ -2,12 +2,14 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const Admin = require('../models/Admin');
+const { buildReadableId } = require('../utils/readableId');
 
 const DEFAULT_ADMIN_EMAIL = 'admin@nexgo.lk';
 const DEFAULT_ADMIN_PASSWORD = 'admin123';
 
 const normalizeAdmin = (admin) => ({
   id: admin._id.toString(),
+  readableId: admin.readableId || buildReadableId('ADM', admin._id),
   fullName: admin.fullName,
   email: admin.email,
   phoneNumber: admin.phoneNumber || '',
@@ -24,6 +26,14 @@ const signAdminToken = (admin) =>
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
+
+const ensureAdminReadableId = async (admin) => {
+  if (!admin || admin.readableId) return admin;
+
+  admin.readableId = buildReadableId('ADM', admin._id);
+  await admin.save();
+  return admin;
+};
 
 const ensureDefaultAdmin = async () => {
   const adminEmail = String(process.env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL).trim().toLowerCase();
@@ -92,6 +102,7 @@ const getAdminProfile = async (req, res) => {
 const listAdmins = async (_req, res) => {
   try {
     const admins = await Admin.find({}).sort({ createdAt: -1 });
+    await Promise.all(admins.map(ensureAdminReadableId));
     return res.status(200).json({ admins: admins.map(normalizeAdmin) });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Unable to load admins' });

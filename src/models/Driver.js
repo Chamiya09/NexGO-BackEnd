@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { buildReadableId } = require('../utils/readableId');
 
 const documentSchema = new mongoose.Schema(
   {
@@ -133,6 +134,12 @@ const driverSchema = new mongoose.Schema(
       trim: true,
       minlength: [2, 'Full name must be at least 2 characters long'],
     },
+    readableId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
     email: {
       type: String,
       required: true,
@@ -212,6 +219,10 @@ const driverSchema = new mongoose.Schema(
 driverSchema.index({ currentLocation: '2dsphere' });
 
 driverSchema.pre('save', async function preSave() {
+  if (!this.readableId) {
+    this.readableId = buildReadableId('DRV', this._id);
+  }
+
   if (!this.isModified('password')) {
     return;
   }

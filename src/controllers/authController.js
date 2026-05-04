@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
 const User = require('../models/User');
+const { buildReadableId } = require('../utils/readableId');
 const { isEmailServiceConfigured, sendPasswordResetOtpEmail } = require('../services/emailService');
 const { emitPassengerAccountStatus } = require('../sockets/rideSocket');
 
@@ -17,6 +18,7 @@ const isValidPositiveInteger = (value) => Number.isInteger(value) && value > 0;
 
 const buildUserResponse = (user) => ({
   id: user._id,
+  readableId: user.readableId || buildReadableId('PAS', user._id),
   fullName: user.fullName,
   email: user.email,
   phoneNumber: user.phoneNumber,
@@ -52,9 +54,18 @@ const getAuthenticatedUser = async (req) => {
   return user;
 };
 
+const ensureUserReadableId = async (user) => {
+  if (!user || user.readableId) return user;
+
+  user.readableId = buildReadableId('PAS', user._id);
+  await user.save();
+  return user;
+};
+
 const listUsers = async (_req, res) => {
   try {
     const users = await User.find().sort({ createdAt: -1 });
+    await Promise.all(users.map(ensureUserReadableId));
 
     return res.status(200).json({
       users: users.map(buildUserManagementResponse),

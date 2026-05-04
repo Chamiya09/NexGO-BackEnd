@@ -1,10 +1,17 @@
 const mongoose = require('mongoose');
+const { buildReadableId } = require('../utils/readableId');
 
 const adminSchema = new mongoose.Schema(
   {
     fullName: {
       type: String,
       required: true,
+      trim: true,
+    },
+    readableId: {
+      type: String,
+      unique: true,
+      sparse: true,
       trim: true,
     },
     email: {
@@ -51,5 +58,13 @@ const adminSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+adminSchema.pre('save', function preSave(next) {
+  if (!this.readableId) {
+    this.readableId = buildReadableId('ADM', this._id);
+  }
+
+  next();
+});
 
 module.exports = mongoose.model('Admin', adminSchema);
