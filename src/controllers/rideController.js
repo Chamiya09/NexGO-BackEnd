@@ -128,6 +128,40 @@ const normalizeRideForAdmin = (ride) => {
 
 // ── GET /api/rides/my-rides ───────────────────────────────────────────────────
 // Returns the authenticated passenger's rides, newest first.
+const createRide = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { pickup, dropoff, vehicleType, price, paymentMethod } = req.body;
+
+    const ride = new Ride({
+      passengerId: decoded.id,
+      pickup,
+      dropoff,
+      vehicleType,
+      price,
+      paymentMethod: paymentMethod || 'CASH',
+      status: 'Pending',
+    });
+
+    await ride.save();
+
+    return res.status(201).json({
+      message: 'Ride created successfully.',
+      ride: normalizeRide(ride),
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] createRide error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to create ride' });
+  }
+};
+
 const getMyRides = async (req, res) => {
   try {
     const decoded = getAuthenticatedUser(req);
@@ -399,6 +433,7 @@ const listTripsForAdmin = async (_req, res) => {
 };
 
 module.exports = {
+  createRide,
   getMyRides,
   getDriverRides,
   getRideById,
