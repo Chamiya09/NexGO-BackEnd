@@ -17,6 +17,9 @@ const buildDriverResponse = (driver) => ({
   profileImageUrl: driver.profileImageUrl || '',
   status: driver.status,
   isOnline: Boolean(driver.isOnline),
+  availabilityStatus: driver.availabilityStatus || (driver.isOnline ? 'Available' : 'Offline'),
+  currentLocation: driver.currentLocation || null,
+  locationUpdatedAt: driver.locationUpdatedAt || null,
   documents: driver.documents || [],
   vehicle: driver.vehicle || null,
   security: driver.security || {},
@@ -455,6 +458,7 @@ const updateDriverStatus = async (req, res) => {
     driver.status = nextStatus;
     if (nextStatus === 'suspended') {
       driver.isOnline = false;
+      driver.availabilityStatus = 'Offline';
     }
 
     await driver.save();
