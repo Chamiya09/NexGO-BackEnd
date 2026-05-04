@@ -96,6 +96,35 @@ const vehicleSchema = new mongoose.Schema(
   }
 );
 
+const geoPointSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: ['Point'],
+      required: true,
+      default: 'Point',
+    },
+    coordinates: {
+      type: [Number],
+      required: true,
+      validate: {
+        validator(value) {
+          return (
+            Array.isArray(value) &&
+            value.length === 2 &&
+            Number.isFinite(Number(value[0])) &&
+            Number.isFinite(Number(value[1]))
+          );
+        },
+        message: 'Driver location must be [longitude, latitude]',
+      },
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
 const driverSchema = new mongoose.Schema(
   {
     fullName: {
@@ -157,11 +186,30 @@ const driverSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    availabilityStatus: {
+      type: String,
+      enum: ['Available', 'Busy', 'Offline'],
+      default: 'Offline',
+    },
+    currentLocation: {
+      type: geoPointSchema,
+      default: null,
+    },
+    locationUpdatedAt: {
+      type: Date,
+      default: null,
+    },
+    totalCashedOut: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+driverSchema.index({ currentLocation: '2dsphere' });
 
 driverSchema.pre('save', async function preSave() {
   if (!this.isModified('password')) {

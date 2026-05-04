@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
+const session = require('express-session');
 
 const connectDB = require('./src/config/db');
 const { initRideSocket } = require('./src/sockets/rideSocket');
@@ -29,11 +30,29 @@ app.set('io', io);
 // ── Express middleware ────────────────────────────────────────────────────────
 app.use(cors({ origin: '*' }));
 app.use(express.json());
+app.use(
+  session({
+    name: 'nexgo.sid',
+    secret: process.env.SESSION_SECRET || 'nexgo_session_secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: false,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  })
+);
 
 // ── Database ──────────────────────────────────────────────────────────────────
 connectDB();
 
 // ── REST routes ───────────────────────────────────────────────────────────────
+app.get('/', (_req, res) => {
+  return res.status(200).json({ message: 'NexGO API is successfully running! 🚀' });
+});
+
 app.get('/health', (_req, res) => {
   return res.status(200).json({ status: 'ok', service: 'nexgo-backend' });
 });
@@ -44,8 +63,10 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/auth', require('./src/routes/authRoutes'));
 app.use('/api/driver-auth', require('./src/routes/driverAuthRoutes'));
+app.use('/api/admin', require('./src/routes/adminRoutes'));
 app.use('/api/upload', require('./src/routes/uploadRoutes'));
 app.use('/api/rides', require('./src/routes/rideRoutes'));
+app.use('/api/reviews', require('./src/routes/reviewRoutes'));
 app.use('/api/promotions', require('./src/routes/promotionRoutes'));
 app.use('/api/support-tickets', require('./src/routes/supportTicketRoutes'));
 

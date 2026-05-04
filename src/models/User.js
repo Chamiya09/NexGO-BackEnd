@@ -80,10 +80,50 @@ const savedAddressSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    showOnRidePage: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     _id: true,
     timestamps: true,
+  }
+);
+
+const walletTransactionSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: ['topup', 'ride_payment', 'refund', 'adjustment'],
+      required: true,
+    },
+    amount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    balanceAfter: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    paymentMethodId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+    description: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
+    _id: true,
   }
 );
 
@@ -143,6 +183,22 @@ const userSchema = new mongoose.Schema(
     savedAddresses: {
       type: [savedAddressSchema],
       default: [],
+    },
+    wallet: {
+      balance: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      transactions: {
+        type: [walletTransactionSchema],
+        default: [],
+      },
+    },
+    status: {
+      type: String,
+      enum: ['active', 'suspended'],
+      default: 'active',
     },
   },
   {

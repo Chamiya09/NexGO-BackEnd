@@ -3,12 +3,15 @@
 
 const Ride = require('../models/Ride');
 const Driver = require('../models/Driver');
+const User = require('../models/User');
 const Promotion = require('../models/Promotion');
 const {
   RIDE_STATUS,
   toCanonicalStatus,
   transitionRideById,
 } = require('../services/rideLifecycleService');
+
+const DISABLE_DRIVER_REQUESTS = false;
 
 // -- In-memory registries -------------------------------------------------------
 
@@ -44,32 +47,56 @@ function haversineDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-const DRIVER_DISPLAY_RADIUS_KM = 2;
-const DRIVER_REQUEST_RADIUS_KM = 2;
+const DRIVER_DISPLAY_RADIUS_KM = 5;
+const DRIVER_REQUEST_RADIUS_KM = 5;
 const ALLOWED_VEHICLE_CATEGORIES = new Set(['Bike', 'Tuk', 'Mini', 'Car', 'Van']);
-const VEHICLE_BASE_PRICES = {
-  Bike: 850,
-  Tuk: 1115,
-  Mini: 1301,
-  Car: 1450,
-  Van: 2100,
+const VEHICLE_PER_KM_RATES = {
+  Bike: 70,
+  Tuk: 150,
+  Mini: 300,
+  Car: 350,
+  Van: 1250,
 };
+const ADMIN_COMMISSION_RATE = 0.2;
+const MINIMUM_FARE = 0;
 const rideRecipientSocketMap = new Map();
 const PASSENGER_ROOM_PREFIX = 'passenger:';
+const DRIVER_ROOM_PREFIX = 'driver:';
 
 function getPassengerRoom(passengerId) {
   return `${PASSENGER_ROOM_PREFIX}${String(passengerId)}`;
 }
 
+function getDriverRoom(driverId) {
+  return `${DRIVER_ROOM_PREFIX}${String(driverId)}`;
+}
+
 function normalizeVehicleCategory(category) {
-  const value = String(category || '').trim();
-  if (value === 'TukTuk') return 'Tuk';
-  if (value === 'Sedan') return 'Car';
-  return value;
+  const value = String(category || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
+
+  if (['bike', 'motorbike', 'motorcycle'].includes(value)) return 'Bike';
+  if (['tuk', 'tuktuk', 'threewheel', 'threewheeler'].includes(value)) return 'Tuk';
+  if (value === 'mini') return 'Mini';
+  if (['car', 'sedan'].includes(value)) return 'Car';
+  if (value === 'van') return 'Van';
+  return '';
 }
 
 function hasValidCoords(location) {
   return Number.isFinite(Number(location?.latitude)) && Number.isFinite(Number(location?.longitude));
+}
+
+function hasValidGeoPoint(driver) {
+  const coordinates = driver?.currentLocation?.coordinates;
+  return (
+    Array.isArray(coordinates) &&
+    coordinates.length === 2 &&
+    Number.isFinite(Number(coordinates[0])) &&
+    Number.isFinite(Number(coordinates[1]))
+  );
 }
 
 function getOnlineDriverLocations(category) {
@@ -84,6 +111,63 @@ function getOnlineDriverLocations(category) {
     const previous = latestByDriverId.get(driverKey);
     if (!previous || Number(location.updatedAt || 0) > Number(previous.location.updatedAt || 0)) {
       latestByDriverId.set(driverKey, { driverSocketId, location });
+    }
+  }
+
+  return Array.from(latestByDriverId.values());
+}
+
+async function findNearbyAvailableDrivers({ pickup, vehicleType, radiusKm = DRIVER_REQUEST_RADIUS_KM }) {
+  if (!hasValidCoords(pickup)) {
+    return [];
+  }
+
+  const requestedCategory = normalizeVehicleCategory(vehicleType);
+  if (!requestedCategory) {
+    return [];
+  }
+
+  const latitude = Number(pickup.latitude);
+  const longitude = Number(pickup.longitude);
+  const radiusMeters = Math.max(1, Number(radiusKm) * 1000);
+
+  return Driver.find({
+    isOnline: true,
+    status: 'active',
+    availabilityStatus: 'Available',
+    'vehicle.category': requestedCategory,
+    currentLocation: {
+      $near: {
+        $geometry: {
+          type: 'Point',
+          coordinates: [longitude, latitude],
+        },
+        $maxDistance: radiusMeters,
+      },
+    },
+  })
+    .select('fullName isOnline status availabilityStatus documents vehicle currentLocation locationUpdatedAt')
+    .lean();
+}
+
+function getAllDriverLocationSnapshot() {
+  const latestByDriverId = new Map();
+
+  for (const [driverSocketId, location] of driverLocationMap.entries()) {
+    if (!hasValidCoords(location)) continue;
+
+    const driverKey = String(location.driverId || driverSocketId);
+    const previous = latestByDriverId.get(driverKey);
+    if (!previous || Number(location.updatedAt || 0) > Number(previous.updatedAt || 0)) {
+      latestByDriverId.set(driverKey, {
+        driverId: location.driverId || driverSocketId,
+        latitude: Number(location.latitude),
+        longitude: Number(location.longitude),
+        vehicleCategory: location.vehicleCategory,
+        isOnline: Boolean(location.isOnline),
+        heading: location.heading,
+        updatedAt: location.updatedAt,
+      });
     }
   }
 
@@ -143,7 +227,7 @@ async function buildPromotionUsage({ passengerId, requestedVehicleType, payloadP
   const requestedPromotionId = payloadPromotion?.id || payloadPromotion?.promotionId;
   const requestedPromotionCode = String(payloadPromotion?.code || '').trim().toUpperCase();
 
-  const originalPrice = VEHICLE_BASE_PRICES[requestedVehicleType] ?? Number(fallbackPrice);
+  const originalPrice = Number(fallbackPrice);
   const safeOriginalPrice = Number.isFinite(originalPrice) && originalPrice > 0 ? originalPrice : 0;
 
   if (!requestedPromotionId && !requestedPromotionCode) {
@@ -199,6 +283,28 @@ async function buildPromotionUsage({ passengerId, requestedVehicleType, payloadP
   };
 }
 
+function calculateRideBasePrice({ vehicleType, pickup, dropoff }) {
+  if (!hasValidCoords(pickup) || !hasValidCoords(dropoff)) {
+    return 0;
+  }
+
+  const rate = VEHICLE_PER_KM_RATES[vehicleType] ?? 0;
+  const distanceKm = haversineDistanceKm(
+    Number(pickup.latitude),
+    Number(pickup.longitude),
+    Number(dropoff.latitude),
+    Number(dropoff.longitude)
+  );
+  const rawFare = Number.isFinite(distanceKm) ? distanceKm * rate : 0;
+  return Math.max(MINIMUM_FARE, Math.round(rawFare));
+}
+
+function isDriverKycApproved(driver) {
+  const documents = Array.isArray(driver?.documents) ? driver.documents : [];
+  if (documents.length === 0) return false;
+  return documents.every((doc) => doc?.status === 'approved');
+}
+
 function emitRemoveRideRequest(io, rideId, extra = {}) {
   io.emit('remove_ride_request', { rideId, ...extra });
   rideRecipientSocketMap.delete(String(rideId));
@@ -218,6 +324,14 @@ function registerPassengerSocket(socket, passengerId) {
   socket.join(getPassengerRoom(passengerKey));
 }
 
+function registerDriverSocket(socket, driverId) {
+  const driverKey = String(driverId || '');
+  if (!driverKey) return;
+
+  driverSocketMap.set(driverKey, socket.id);
+  socket.join(getDriverRoom(driverKey));
+}
+
 function emitToPassenger(io, passengerId, eventName, payload) {
   const passengerSocketIds = getPassengerSocketIds(passengerId);
 
@@ -230,6 +344,27 @@ function emitToPassenger(io, passengerId, eventName, payload) {
   return passengerSocketIds.size > 0;
 }
 
+function emitPassengerAccountStatus(io, passengerId, status) {
+  emitToPassenger(io, passengerId, 'passenger_account_status', {
+    passengerId: String(passengerId),
+    status,
+  });
+}
+
+function emitDriverAccountStatus(io, driverId, status) {
+  const driverKey = String(driverId);
+  const socketId = driverSocketMap.get(driverKey);
+
+  if (!socketId) {
+    console.warn(`[Socket.IO] Driver socket not found for driverId=${driverKey}`);
+  }
+
+  io.to(getDriverRoom(driverKey)).emit('driver_account_status', {
+    driverId: driverKey,
+    status,
+  });
+}
+
 function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
   const payload = {
     rideId: ride._id.toString(),
@@ -240,6 +375,161 @@ function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
 
   emitToPassenger(io, ride.passengerId, eventName, payload);
   emitToPassenger(io, ride.passengerId, 'rideStatusUpdate', payload);
+}
+
+async function broadcastRideRequestToNearbyDrivers(io, ride, options = {}) {
+  if (DISABLE_DRIVER_REQUESTS) {
+    return {
+      ok: false,
+      code: 'DRIVER_REQUESTS_DISABLED',
+      message: 'Driver requests are temporarily disabled.',
+      notifiedSocketIds: [],
+    };
+  }
+
+  const requestedVehicleType = normalizeVehicleCategory(ride.vehicleType);
+
+  if (!ALLOWED_VEHICLE_CATEGORIES.has(requestedVehicleType)) {
+    return {
+      ok: false,
+      code: 'INVALID_VEHICLE_CATEGORY',
+      message: 'Please select a valid vehicle category.',
+      notifiedSocketIds: [],
+    };
+  }
+
+  const pickup = ride.pickup;
+  const matchingDrivers = [];
+
+  for (const { driverSocketId, location } of getOnlineDriverLocations(requestedVehicleType)) {
+    const dist = haversineDistanceKm(
+      pickup.latitude,
+      pickup.longitude,
+      location.latitude,
+      location.longitude
+    );
+
+    matchingDrivers.push({ driverSocketId, driverId: location.driverId, distanceKm: dist });
+  }
+
+  let nearbyDrivers = matchingDrivers
+    .filter((driver) => driver.distanceKm <= DRIVER_REQUEST_RADIUS_KM)
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+    .filter((driver) => {
+      const currentLocation = driverLocationMap.get(driver.driverSocketId);
+      return currentLocation?.isOnline && hasValidCoords(currentLocation);
+    });
+
+  if (nearbyDrivers.length === 0) {
+    try {
+      const dbDrivers = await findNearbyAvailableDrivers({
+        pickup,
+        vehicleType: requestedVehicleType,
+        radiusKm: DRIVER_REQUEST_RADIUS_KM,
+      });
+
+      nearbyDrivers = dbDrivers
+        .filter(isDriverKycApproved)
+        .filter(hasValidGeoPoint)
+        .map((driver) => {
+          const driverId = String(driver._id);
+          const [longitude, latitude] = driver.currentLocation.coordinates;
+          return {
+            driverId,
+            driverSocketId: driverSocketMap.get(driverId) || null,
+            driverRoom: getDriverRoom(driverId),
+            distanceKm: haversineDistanceKm(
+              pickup.latitude,
+              pickup.longitude,
+              latitude,
+              longitude
+            ),
+          };
+        })
+        .sort((a, b) => a.distanceKm - b.distanceKm);
+    } catch (error) {
+      console.error('[Socket.IO] Mongo nearby driver fallback failed:', error.message);
+    }
+  }
+
+  if (nearbyDrivers.length === 0) {
+    const onlineCategories = Array.from(driverLocationMap.values())
+      .filter((location) => location.isOnline)
+      .map((location) => normalizeVehicleCategory(location.vehicleCategory) || 'Unknown');
+
+    console.warn(
+      `[Socket.IO] No online ${requestedVehicleType} drivers found within ${DRIVER_REQUEST_RADIUS_KM} km for passengerId=${ride.passengerId}. Online categories: ${onlineCategories.join(', ') || 'none'}`
+    );
+
+    return {
+      ok: false,
+      code: 'NO_MATCHING_DRIVER',
+      message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
+      notifiedSocketIds: [],
+    };
+  }
+
+  const passenger = await User.findById(ride.passengerId).select('fullName profileImageUrl').lean();
+  const rideData = {
+    rideId: ride._id.toString(),
+    passengerId: String(ride.passengerId),
+    passengerName: options.passengerName ?? passenger?.fullName ?? 'Passenger',
+    passengerImage: passenger?.profileImageUrl || '',
+    vehicleType: requestedVehicleType,
+    price: ride.price,
+    paymentMethod: ride.paymentMethod === 'WALLET' ? 'WALLET' : 'CASH',
+    promotion: ride.promotion?.promotionId
+      ? {
+          code: ride.promotion.code,
+          discountAmount: ride.promotion.discountAmount,
+          originalPrice: ride.promotion.originalPrice,
+        }
+      : null,
+    pickup: ride.pickup,
+    dropoff: ride.dropoff,
+    requestedAt: ride.createdAt,
+    status: ride.status,
+    canonicalStatus: 'PENDING',
+  };
+
+  const notifiedSocketIds = [];
+  for (const driver of nearbyDrivers) {
+    if (driver.driverSocketId) {
+      const currentLocation = driverLocationMap.get(driver.driverSocketId);
+      if (!currentLocation?.isOnline || !hasValidCoords(currentLocation)) continue;
+    }
+
+    console.log(
+      `[Socket.IO] Driver ${driver.driverId} is ${driver.distanceKm.toFixed(2)} km away - online and within request range`
+    );
+    const target = driver.driverSocketId || driver.driverRoom;
+    const roomSize = driver.driverRoom
+      ? io.sockets.adapter.rooms.get(driver.driverRoom)?.size || 0
+      : 0;
+
+    if (!target || (!driver.driverSocketId && roomSize === 0)) continue;
+
+    io.to(target).emit('incomingRide', rideData);
+    io.to(target).emit('newRideRequest', rideData);
+    notifiedSocketIds.push(driver.driverSocketId || driver.driverRoom);
+  }
+
+  if (notifiedSocketIds.length === 0) {
+    return {
+      ok: false,
+      code: 'NO_MATCHING_DRIVER',
+      message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
+      notifiedSocketIds: [],
+    };
+  }
+
+  rideRecipientSocketMap.set(rideData.rideId, new Set(notifiedSocketIds));
+
+  console.log(
+    `[Socket.IO] incomingRide sent to ${notifiedSocketIds.length} matching driver(s) for rideId=${rideData.rideId}`
+  );
+
+  return { ok: true, notifiedSocketIds, rideData };
 }
 
 async function handleStrictTransition(io, socket, payload, options) {
@@ -282,11 +572,36 @@ function initRideSocket(io) {
   io.on('connection', (socket) => {
     console.log(`[Socket.IO] Client connected: ${socket.id}`);
 
-    socket.on('registerPassenger', (passengerId) => {
+    socket.on('registerPassenger', async (passengerId) => {
       registerPassengerSocket(socket, passengerId);
       console.log(
           `[Socket.IO] Passenger registered: userId=${passengerId} -> socketId=${socket.id}`
       );
+
+      try {
+        const passenger = await User.findById(passengerId).select('status').lean();
+        if (passenger?.status) {
+          emitPassengerAccountStatus(io, passengerId, passenger.status);
+        }
+      } catch (error) {
+        console.error('[Socket.IO] Unable to emit passenger account status:', error.message);
+      }
+    });
+
+    socket.on('registerDriver', async (driverId) => {
+      const driverKey = String(driverId || '');
+      if (!driverKey) return;
+      registerDriverSocket(socket, driverKey);
+      console.log(`[Socket.IO] Driver registered: driverId=${driverKey} -> socketId=${socket.id}`);
+
+      try {
+        const driver = await Driver.findById(driverKey).select('status').lean();
+        if (driver?.status) {
+          emitDriverAccountStatus(io, driverKey, driver.status);
+        }
+      } catch (error) {
+        console.error('[Socket.IO] Unable to emit driver account status:', error.message);
+      }
     });
 
     socket.on('updateDriverLocation', async ({ driverId, latitude, longitude, vehicleCategory, isOnline, heading }) => {
@@ -307,7 +622,7 @@ function initRideSocket(io) {
         if (previousSocketId && previousSocketId !== socket.id) {
           driverLocationMap.delete(previousSocketId);
         }
-        driverSocketMap.set(normalizedDriverId, socket.id);
+        registerDriverSocket(socket, normalizedDriverId);
       }
 
       const previousLocation = driverLocationMap.get(socket.id);
@@ -318,36 +633,112 @@ function initRideSocket(io) {
             ? previousLocation.isOnline
             : false;
 
+      const updatedAt = Date.now();
+      const numericLatitude = Number(latitude);
+      const numericLongitude = Number(longitude);
+      const validCoordinates = Number.isFinite(numericLatitude) && Number.isFinite(numericLongitude);
+
       driverLocationMap.set(socket.id, {
         driverId,
-        latitude: Number(latitude),
-        longitude: Number(longitude),
+        latitude: numericLatitude,
+        longitude: numericLongitude,
         vehicleCategory: nextVehicleCategory,
         isOnline: nextIsOnline,
-        updatedAt: Date.now(),
+        heading,
+        updatedAt,
+      });
+
+      if (normalizedDriverId) {
+        const update = {
+          isOnline: nextIsOnline,
+          availabilityStatus: nextIsOnline ? 'Available' : 'Offline',
+          ...(nextVehicleCategory && { 'vehicle.category': nextVehicleCategory }),
+        };
+
+        if (validCoordinates) {
+          update.currentLocation = {
+            type: 'Point',
+            coordinates: [numericLongitude, numericLatitude],
+          };
+          update.locationUpdatedAt = new Date(updatedAt);
+        }
+
+        try {
+          await Driver.findByIdAndUpdate(normalizedDriverId, update, { runValidators: true });
+        } catch (error) {
+          console.error('[Socket.IO] Unable to persist driver location:', error.message);
+        }
+      }
+
+      io.emit('drivers_location_update', {
+        driverId: driverId || socket.id,
+        latitude: numericLatitude,
+        longitude: numericLongitude,
+        vehicleCategory: nextVehicleCategory,
+        isOnline: nextIsOnline,
+        heading,
+        updatedAt,
       });
       socket.broadcast.emit(`driver_location_${driverId}`, { latitude, longitude, heading });
     });
 
+    socket.on('get_all_driver_locations', () => {
+      socket.emit('drivers_location_snapshot', getAllDriverLocationSnapshot());
+    });
+
     socket.on('toggle_online_status', async ({ driverId, isOnline }) => {
       try {
-        const Driver = require('../models/Driver');
-        await Driver.findByIdAndUpdate(driverId, { isOnline });
+        await Driver.findByIdAndUpdate(driverId, {
+          isOnline,
+          availabilityStatus: isOnline ? 'Available' : 'Offline',
+        });
 
         const loc = driverLocationMap.get(socket.id);
         if (loc) {
           loc.isOnline = isOnline;
+          loc.updatedAt = Date.now();
           driverLocationMap.set(socket.id, loc);
+          io.emit('drivers_location_update', {
+            driverId: loc.driverId || driverId || socket.id,
+            latitude: Number(loc.latitude),
+            longitude: Number(loc.longitude),
+            vehicleCategory: loc.vehicleCategory,
+            isOnline: Boolean(isOnline),
+            heading: loc.heading,
+            updatedAt: loc.updatedAt,
+          });
         }
       } catch (error) {
         console.error('[Socket.IO] toggle_online_status error:', error);
       }
     });
 
-    socket.on('get_available_drivers', ({ category, latitude, longitude }) => {
+    socket.on('get_available_drivers', async ({ category, latitude, longitude }) => {
       const available = [];
       const requestedCategory = normalizeVehicleCategory(category);
-      for (const { location } of getOnlineDriverLocations(requestedCategory)) {
+      const candidates = getOnlineDriverLocations(requestedCategory);
+      const driverIds = candidates
+        .map(({ location }) => String(location?.driverId || ''))
+        .filter((id) => id.length > 0);
+      const approvedDrivers = new Set();
+
+      if (driverIds.length > 0) {
+        try {
+          const drivers = await Driver.find({ _id: { $in: driverIds } })
+            .select('documents')
+            .lean();
+          for (const driver of drivers) {
+            if (isDriverKycApproved(driver)) {
+              approvedDrivers.add(String(driver._id));
+            }
+          }
+        } catch (error) {
+          console.error('[Socket.IO] get_available_drivers error:', error.message);
+        }
+      }
+
+      for (const { location } of candidates) {
+        if (!approvedDrivers.has(String(location?.driverId || ''))) continue;
         const hasPassengerCoords = Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
         if (hasPassengerCoords) {
           const dist = haversineDistanceKm(
@@ -363,154 +754,109 @@ function initRideSocket(io) {
           available.push(location);
         }
       }
+
+      if (available.length === 0 && Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude))) {
+        try {
+          const dbDrivers = await findNearbyAvailableDrivers({
+            pickup: { latitude: Number(latitude), longitude: Number(longitude) },
+            vehicleType: requestedCategory,
+            radiusKm: DRIVER_DISPLAY_RADIUS_KM,
+          });
+
+          for (const driver of dbDrivers) {
+            if (!isDriverKycApproved(driver) || !hasValidGeoPoint(driver)) continue;
+
+            const [driverLongitude, driverLatitude] = driver.currentLocation.coordinates;
+            const distanceKm = haversineDistanceKm(
+              Number(latitude),
+              Number(longitude),
+              driverLatitude,
+              driverLongitude
+            );
+
+            if (distanceKm > DRIVER_DISPLAY_RADIUS_KM) continue;
+
+            available.push({
+              driverId: String(driver._id),
+              latitude: driverLatitude,
+              longitude: driverLongitude,
+              vehicleCategory: driver.vehicle?.category,
+              isOnline: Boolean(driver.isOnline),
+              updatedAt: driver.locationUpdatedAt?.getTime?.() ?? Date.now(),
+              distanceKm: Number(distanceKm.toFixed(2)),
+            });
+          }
+        } catch (error) {
+          console.error('[Socket.IO] get_available_drivers Mongo fallback error:', error.message);
+        }
+      }
+
       socket.emit('available_drivers', available);
     });
 
     socket.on('requestRide', async (payload) => {
       console.log('[Socket.IO] requestRide received:', payload);
 
-      try {
-        const { passengerId, passengerName, vehicleType, price, pickup, dropoff, promotion } = payload;
+      const { passengerId } = payload || {};
+      if (passengerId) {
         registerPassengerSocket(socket, passengerId);
-        const requestedVehicleType = normalizeVehicleCategory(vehicleType);
-
-        if (!ALLOWED_VEHICLE_CATEGORIES.has(requestedVehicleType)) {
-          socket.emit('rideError', {
-            code: 'INVALID_VEHICLE_CATEGORY',
-            message: 'Please select a valid vehicle category.',
-          });
-          return;
-        }
-
-        const promotionUsage = await buildPromotionUsage({
-          passengerId,
-          requestedVehicleType,
-          payloadPromotion: promotion,
-          fallbackPrice: price,
-        });
-
-        if (promotionUsage.error) {
-          socket.emit('rideError', promotionUsage.error);
-          return;
-        }
-
-        const ridePrice = promotionUsage.finalPrice;
-
-        const matchingDrivers = [];
-
-        for (const { driverSocketId, location } of getOnlineDriverLocations(requestedVehicleType)) {
-          if (driverSocketId === socket.id) continue;
-
-          const dist = haversineDistanceKm(
-            pickup.latitude,
-            pickup.longitude,
-            location.latitude,
-            location.longitude
-          );
-
-          matchingDrivers.push({ driverSocketId, driverId: location.driverId, distanceKm: dist });
-        }
-
-        const nearbyDrivers = matchingDrivers
-          .filter((driver) => driver.distanceKm <= DRIVER_REQUEST_RADIUS_KM)
-          .sort((a, b) => a.distanceKm - b.distanceKm)
-          .filter((driver) => {
-            const currentLocation = driverLocationMap.get(driver.driverSocketId);
-            return currentLocation?.isOnline && hasValidCoords(currentLocation);
-          });
-
-        if (nearbyDrivers.length === 0) {
-          const onlineCategories = Array.from(driverLocationMap.values())
-            .filter((location) => location.isOnline)
-            .map((location) => normalizeVehicleCategory(location.vehicleCategory) || 'Unknown');
-
-          console.warn(
-            `[Socket.IO] No online ${requestedVehicleType} drivers found within ${DRIVER_REQUEST_RADIUS_KM} km for passengerId=${passengerId}. Online categories: ${onlineCategories.join(', ') || 'none'}`
-          );
-          socket.emit('rideError', {
-            code: 'NO_MATCHING_DRIVER',
-            message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
-          });
-          return;
-        }
-
-        const ride = await Ride.create({
-          passengerId,
-          vehicleType: requestedVehicleType,
-          price: ridePrice,
-          pickup,
-          dropoff,
-          ...(promotionUsage.promotionSnapshot && { promotion: promotionUsage.promotionSnapshot }),
-          status: RIDE_STATUS.PENDING,
-        });
-
-        const rideData = {
-          rideId: ride._id.toString(),
-          passengerId,
-          passengerName: passengerName ?? 'Passenger',
-          vehicleType: requestedVehicleType,
-          price: ridePrice,
-          promotion: promotionUsage.promotionSnapshot
-            ? {
-                code: promotionUsage.promotionSnapshot.code,
-                discountAmount: promotionUsage.promotionSnapshot.discountAmount,
-                originalPrice: promotionUsage.promotionSnapshot.originalPrice,
-              }
-            : null,
-          pickup,
-          dropoff,
-          requestedAt: ride.createdAt,
-          status: ride.status,
-          canonicalStatus: 'PENDING',
-        };
-
-        const notifiedSocketIds = [];
-        for (const driver of nearbyDrivers) {
-          const currentLocation = driverLocationMap.get(driver.driverSocketId);
-          if (!currentLocation?.isOnline || !hasValidCoords(currentLocation)) continue;
-
-          console.log(
-            `[Socket.IO] Driver ${driver.driverId} is ${driver.distanceKm.toFixed(2)} km away - online and within request range`
-          );
-          io.to(driver.driverSocketId).emit('incomingRide', rideData);
-          notifiedSocketIds.push(driver.driverSocketId);
-        }
-
-        if (notifiedSocketIds.length === 0) {
-          await Ride.findByIdAndDelete(ride._id);
-          socket.emit('rideError', {
-            code: 'NO_MATCHING_DRIVER',
-            message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
-          });
-          return;
-        }
-
-        socket.emit('rideCreated', { rideId: rideData.rideId });
-
-        rideRecipientSocketMap.set(rideData.rideId, new Set(notifiedSocketIds));
-
-        console.log(
-          `[Socket.IO] incomingRide sent to ${notifiedSocketIds.length} matching driver(s) for rideId=${rideData.rideId}`
-        );
-      } catch (error) {
-        console.error('[Socket.IO] requestRide error:', error);
-        socket.emit('rideError', {
-          code: 'CREATE_RIDE_FAILED',
-          message: getRideErrorMessage(error),
-        });
       }
+
+      socket.emit('rideError', {
+        code: 'REST_RIDE_CREATE_REQUIRED',
+        message: 'Ride creation now uses POST /api/rides. Please update the app and try again.',
+      });
     });
 
     socket.on('acceptRide', async (payload) => {
       console.log('[Socket.IO] acceptRide received:', payload);
 
+      if (DISABLE_DRIVER_REQUESTS) {
+        socket.emit('rideError', {
+          code: 'DRIVER_REQUESTS_DISABLED',
+          message: 'Driver requests are temporarily disabled.',
+        });
+        return;
+      }
+
       try {
         const { rideId, driverId } = payload;
-        const currentDriverLocation = getDriverLocationById(driverId);
+        let currentDriverLocation = getDriverLocationById(driverId);
+        if (!currentDriverLocation?.isOnline) {
+          const driverLocationDoc = await Driver.findById(driverId)
+            .select('isOnline availabilityStatus currentLocation vehicle')
+            .lean();
+
+          if (
+            driverLocationDoc?.isOnline &&
+            driverLocationDoc.availabilityStatus === 'Available' &&
+            hasValidGeoPoint(driverLocationDoc)
+          ) {
+            const [longitude, latitude] = driverLocationDoc.currentLocation.coordinates;
+            currentDriverLocation = {
+              driverId,
+              latitude,
+              longitude,
+              vehicleCategory: driverLocationDoc.vehicle?.category,
+              isOnline: true,
+              updatedAt: driverLocationDoc.locationUpdatedAt?.getTime?.() ?? Date.now(),
+            };
+          }
+        }
+
         if (!currentDriverLocation?.isOnline) {
           socket.emit('rideError', {
             code: 'DRIVER_OFFLINE',
             message: 'Go online before accepting ride requests.',
+          });
+          return;
+        }
+
+        const driverProfile = await Driver.findById(driverId).select('documents').lean();
+        if (!isDriverKycApproved(driverProfile)) {
+          socket.emit('rideError', {
+            code: 'DRIVER_KYC_PENDING',
+            message: 'Upload and get approval for license, insurance, and registration to accept rides.',
           });
           return;
         }
@@ -531,12 +877,13 @@ function initRideSocket(io) {
 
         emitRemoveRideRequest(io, rideId, { reason: 'accepted', acceptedByDriverId: driverId });
 
-        const driver = await Driver.findById(driverId).select('fullName phoneNumber vehicle').lean();
-        const driverLocation = getDriverLocationById(driverId);
+        const driver = await Driver.findById(driverId).select('fullName phoneNumber profileImageUrl vehicle').lean();
+        const driverLocation = getDriverLocationById(driverId) || currentDriverLocation;
         const acceptanceData = {
           rideId: ride._id.toString(),
           driverId,
           driverName: driver?.fullName || 'Driver',
+          driverImage: driver?.profileImageUrl || '',
           driverPhoneNumber: driver?.phoneNumber || '',
           driverVehicle: driver?.vehicle || null,
           driverLocation: driverLocation
@@ -744,4 +1091,13 @@ function initRideSocket(io) {
   });
 }
 
-module.exports = { initRideSocket, emitRemoveRideRequest };
+module.exports = {
+  initRideSocket,
+  broadcastRideRequestToNearbyDrivers,
+  buildPromotionUsage,
+  calculateRideBasePrice,
+  emitRemoveRideRequest,
+  emitPassengerAccountStatus,
+  emitDriverAccountStatus,
+  normalizeVehicleCategory,
+};

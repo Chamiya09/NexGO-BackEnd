@@ -3,11 +3,26 @@
 
 const jwt = require('jsonwebtoken');
 const Ride = require('../models/Ride');
-const { emitRemoveRideRequest } = require('../sockets/rideSocket');
+const User = require('../models/User');
+const {
+  broadcastRideRequestToNearbyDrivers,
+  buildPromotionUsage,
+  calculateRideBasePrice,
+  emitRemoveRideRequest,
+  normalizeVehicleCategory,
+} = require('../sockets/rideSocket');
 const {
   toCanonicalStatus,
   RIDE_STATUS,
 } = require('../services/rideLifecycleService');
+
+const ADMIN_COMMISSION_RATE = 0.2;
+
+const calculateAdminCommission = (amount) => {
+  const base = Number(amount || 0);
+  if (!Number.isFinite(base) || base <= 0) return 0;
+  return Number((base * ADMIN_COMMISSION_RATE).toFixed(2));
+};
 
 // ── Reusable auth helper (same pattern as authController.js) ──────────────────
 const getAuthenticatedUser = (req) => {
@@ -24,8 +39,12 @@ const normalizeDriver = (driver) => {
   return {
     id: driver._id?.toString?.() ?? driver.toString?.() ?? null,
     fullName: driver.fullName ?? '',
+    email: driver.email ?? '',
     phoneNumber: driver.phoneNumber ?? '',
+    emergencyContact: driver.emergencyContact ?? '',
     profileImageUrl: driver.profileImageUrl ?? '',
+    status: driver.status ?? '',
+    isOnline: Boolean(driver.isOnline),
     vehicle: driver.vehicle
       ? {
           make: driver.vehicle.make ?? '',
@@ -33,6 +52,8 @@ const normalizeDriver = (driver) => {
           plateNumber: driver.vehicle.plateNumber ?? '',
           color: driver.vehicle.color ?? '',
           category: driver.vehicle.category ?? '',
+          year: driver.vehicle.year ?? null,
+          seats: driver.vehicle.seats ?? null,
         }
       : null,
   };
@@ -47,6 +68,7 @@ const normalizePassenger = (passenger) => {
     email: passenger.email ?? '',
     phoneNumber: passenger.phoneNumber ?? '',
     profileImageUrl: passenger.profileImageUrl ?? '',
+    status: passenger.status ?? '',
   };
 };
 
@@ -79,6 +101,9 @@ const normalizeRide = (ride) => {
     dropoff: ride.dropoff,
     vehicleType: ride.vehicleType,
     price: ride.price,
+    adminCommission: ride.adminCommission ?? calculateAdminCommission(ride.price),
+    driverEarnings: ride.driverEarnings ?? Math.max(0, ride.price - calculateAdminCommission(ride.price)),
+    paymentMethod: ride.paymentMethod || 'CASH',
     promotion: ride.promotion?.promotionId
       ? {
           id: ride.promotion.promotionId?.toString?.() ?? null,
@@ -98,20 +123,101 @@ const normalizeRide = (ride) => {
   };
 };
 
-const normalizeRating = (value) => {
-  const numericRating = Number(value);
-  if (!Number.isFinite(numericRating)) return null;
-
-  return Math.round(numericRating);
-};
-
-const normalizeComment = (value) => {
-  if (typeof value !== 'string') return '';
-  return value.trim().slice(0, 220);
+const normalizeRideForAdmin = (ride) => {
+  const base = normalizeRide(ride);
+  return {
+    ...base,
+    adminCommissionRate: ADMIN_COMMISSION_RATE,
+    adminCommissionAmount: calculateAdminCommission(base.price),
+  };
 };
 
 // ── GET /api/rides/my-rides ───────────────────────────────────────────────────
 // Returns the authenticated passenger's rides, newest first.
+const createRide = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { pickup, dropoff, vehicleType, price, paymentMethod, promotion, passengerName } = req.body;
+    const requestedVehicleType = normalizeVehicleCategory(vehicleType);
+    const allowedVehicleTypes = Ride.schema.path('vehicleType').enumValues;
+
+    if (!allowedVehicleTypes.includes(requestedVehicleType)) {
+      return res.status(400).json({
+        code: 'INVALID_VEHICLE_CATEGORY',
+        message: 'Please select a valid vehicle category.',
+      });
+    }
+
+    const basePrice = calculateRideBasePrice({
+      vehicleType: requestedVehicleType,
+      pickup,
+      dropoff,
+    });
+    const promotionUsage = await buildPromotionUsage({
+      passengerId: decoded.id,
+      requestedVehicleType,
+      payloadPromotion: promotion,
+      fallbackPrice: Number.isFinite(basePrice) && basePrice > 0 ? basePrice : price,
+    });
+
+    if (promotionUsage.error) {
+      return res.status(400).json(promotionUsage.error);
+    }
+
+    const ridePrice = promotionUsage.finalPrice;
+    const adminCommission = calculateAdminCommission(ridePrice);
+
+    const ride = new Ride({
+      passengerId: decoded.id,
+      pickup,
+      dropoff,
+      vehicleType: requestedVehicleType,
+      price: ridePrice,
+      adminCommission,
+      driverEarnings: Math.max(0, ridePrice - adminCommission),
+      ...(promotionUsage.promotionSnapshot && { promotion: promotionUsage.promotionSnapshot }),
+      paymentMethod: paymentMethod === 'WALLET' ? 'WALLET' : 'CASH',
+      status: 'Pending',
+    });
+
+    await ride.save();
+
+    const io = req.app.get('io');
+    if (io) {
+      const dispatchResult = await broadcastRideRequestToNearbyDrivers(io, ride, { passengerName });
+      if (!dispatchResult.ok) {
+        await Ride.findByIdAndDelete(ride._id);
+        const statusCode =
+          dispatchResult.code === 'NO_MATCHING_DRIVER'
+            ? 404
+            : dispatchResult.code === 'DRIVER_REQUESTS_DISABLED'
+              ? 503
+              : 400;
+
+        return res.status(statusCode).json({
+          code: dispatchResult.code,
+          message: dispatchResult.message,
+        });
+      }
+    }
+
+    return res.status(201).json({
+      message: 'Ride created successfully.',
+      ride: normalizeRide(ride),
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] createRide error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to create ride' });
+  }
+};
+
 const getMyRides = async (req, res) => {
   try {
     const decoded = getAuthenticatedUser(req);
@@ -148,7 +254,7 @@ const getDriverRides = async (req, res) => {
 
     const rides = await Ride.find({ driverId: decoded.id })
       .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
-      .populate('passengerId', 'fullName email phoneNumber profileImageUrl')
+      .populate('passengerId', 'fullName email phoneNumber profileImageUrl status')
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
@@ -167,36 +273,6 @@ const getDriverRides = async (req, res) => {
 
 // ── GET /api/rides/driver-reviews ─────────────────────────────────────────────
 // Returns approved passenger reviews for the authenticated driver.
-const listRideReviewsForDriver = async (req, res) => {
-  try {
-    const decoded = getAuthenticatedUser(req);
-    if (!decoded) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-
-    const rides = await Ride.find({
-      driverId: decoded.id,
-      'review.rating': { $exists: true, $ne: null },
-      'review.status': 'approved',
-    })
-      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
-      .populate('passengerId', 'fullName email phoneNumber profileImageUrl')
-      .sort({ 'review.submittedAt': -1, 'review.reviewedAt': -1, completedAt: -1, createdAt: -1 })
-      .limit(100)
-      .lean();
-
-    return res.status(200).json({
-      reviews: rides.map(normalizeRide),
-    });
-  } catch (error) {
-    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Invalid or expired token' });
-    }
-    console.error('[rideController] listRideReviewsForDriver error:', error);
-    return res.status(500).json({ message: error.message || 'Unable to fetch driver reviews' });
-  }
-};
-
 // ── GET /api/rides/:id ────────────────────────────────────────────────────────
 // Returns a single ride (passenger must own it).
 const getRideById = async (req, res) => {
@@ -305,193 +381,121 @@ const cancelRide = async (req, res) => {
   }
 };
 
+// ── POST /api/rides/:id/confirm-payment ─────────────────────────────────────
+// Passenger confirms payment and wallet is debited.
+const confirmRidePayment = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const ride = await Ride.findOne({
+      _id: req.params.id,
+      passengerId: decoded.id,
+    });
+
+    if (!ride) {
+      return res.status(404).json({ message: 'Ride not found' });
+    }
+
+    const canonicalStatus = toCanonicalStatus(ride.status);
+    if (canonicalStatus !== 'COMPLETED') {
+      return res.status(400).json({ message: 'Ride is not completed yet.' });
+    }
+
+    if (ride.paymentStatus === 'PAID') {
+      return res.status(200).json({
+        message: 'Payment already confirmed.',
+        ride: normalizeRide(ride),
+      });
+    }
+
+    const amount = Number(ride.price || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid ride amount.' });
+    }
+
+    let nextBalance = null;
+
+    if (ride.paymentMethod === 'WALLET') {
+      const user = await User.findById(decoded.id);
+      if (!user) {
+        return res.status(404).json({ message: 'Passenger not found' });
+      }
+
+      if (!user.wallet) {
+        user.wallet = { balance: 0, transactions: [] };
+      }
+      if (!Array.isArray(user.wallet.transactions)) {
+        user.wallet.transactions = [];
+      }
+
+      const balance = Number(user.wallet.balance || 0);
+      if (balance < amount) {
+        return res.status(400).json({ message: 'Insufficient wallet balance.' });
+      }
+
+      nextBalance = balance - amount;
+      user.wallet.balance = nextBalance;
+      user.wallet.transactions.push({
+        type: 'ride_payment',
+        amount,
+        balanceAfter: nextBalance,
+        description: `Ride payment ${ride._id.toString().slice(-6).toUpperCase()}`,
+      });
+
+      ride.walletBalanceAfter = nextBalance;
+      await user.save();
+    }
+
+    ride.paymentStatus = 'PAID';
+    ride.paymentConfirmedAt = new Date();
+
+    await ride.save();
+
+    return res.status(200).json({
+      message: 'Payment confirmed.',
+      ride: normalizeRide(ride),
+      ...(nextBalance !== null && { wallet: { balance: nextBalance } }),
+    });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    console.error('[rideController] confirmRidePayment error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to confirm payment' });
+  }
+};
+
 // ── PATCH /api/rides/:id/review ──────────────────────────────────────────────
 // Passenger adds or updates their review for a completed ride.
-const submitRideReview = async (req, res) => {
+const listTripsForAdmin = async (_req, res) => {
   try {
-    const decoded = getAuthenticatedUser(req);
-    if (!decoded) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-
-    const rating = normalizeRating(req.body?.rating);
-    const comment = normalizeComment(req.body?.comment);
-
-    if (!rating || rating < 1 || rating > 5) {
-      return res.status(400).json({ message: 'Rating must be a number from 1 to 5' });
-    }
-
-    const ride = await Ride.findOne({
-      _id: req.params.id,
-      passengerId: decoded.id,
-    }).populate('driverId', 'fullName phoneNumber profileImageUrl vehicle');
-
-    if (!ride) {
-      return res.status(404).json({ message: 'Ride not found' });
-    }
-
-    if (toCanonicalStatus(ride.status) !== 'COMPLETED') {
-      return res.status(400).json({ message: 'Only completed rides can be reviewed' });
-    }
-
-    if (ride.review?.status === 'rejected') {
-      return res.status(403).json({ message: 'Rejected reviews cannot be edited' });
-    }
-
-    ride.review = {
-      rating,
-      comment,
-      status: 'review',
-      submittedAt: new Date(),
-      reviewedAt: new Date(),
-      moderatedAt: null,
-    };
-
-    await ride.save();
-
-    return res.status(200).json({
-      ride: normalizeRide(ride),
-      review: normalizeReview(ride.review, ride._id),
-    });
-  } catch (error) {
-    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Invalid or expired token' });
-    }
-    console.error('[rideController] submitRideReview error:', error);
-    return res.status(500).json({ message: error.message || 'Unable to submit review' });
-  }
-};
-
-const deleteRideReview = async (req, res) => {
-  try {
-    const decoded = getAuthenticatedUser(req);
-    if (!decoded) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-
-    const ride = await Ride.findOne({
-      _id: req.params.id,
-      passengerId: decoded.id,
-    }).populate('driverId', 'fullName phoneNumber profileImageUrl vehicle');
-
-    if (!ride) {
-      return res.status(404).json({ message: 'Ride not found' });
-    }
-
-    ride.review = null;
-    await ride.save();
-
-    return res.status(200).json({
-      ride: normalizeRide(ride),
-      review: null,
-      message: 'Review deleted',
-    });
-  } catch (error) {
-    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Invalid or expired token' });
-    }
-    console.error('[rideController] deleteRideReview error:', error);
-    return res.status(500).json({ message: error.message || 'Unable to delete review' });
-  }
-};
-
-const normalizeAdminReview = (ride) => {
-  const review = normalizeReview(ride.review, ride._id);
-  if (!review) return null;
-
-  return {
-    ...review,
-    rideId: ride._id.toString(),
-    rideStatus: ride.status,
-    vehicleType: ride.vehicleType,
-    price: ride.price,
-    requestedAt: ride.createdAt,
-    completedAt: ride.completedAt ?? null,
-    passenger: ride.passengerId
-      ? {
-          id: ride.passengerId._id?.toString?.() ?? ride.passengerId.toString?.() ?? '',
-          fullName: ride.passengerId.fullName ?? 'Passenger',
-          email: ride.passengerId.email ?? '',
-          phoneNumber: ride.passengerId.phoneNumber ?? '',
-        }
-      : null,
-    driver: normalizeDriver(ride.driverId),
-  };
-};
-
-const listRideReviewsForAdmin = async (req, res) => {
-  try {
-    const status = String(req.query.status || 'review').toLowerCase();
-    const allowedStatuses = ['all', 'review', 'approved', 'rejected'];
-    const reviewStatus = allowedStatuses.includes(status) ? status : 'review';
-
-    const query = {
-      'review.rating': { $exists: true, $ne: null },
-    };
-
-    if (reviewStatus === 'review') {
-      query.$or = [
-        { 'review.status': 'review' },
-        { 'review.status': { $exists: false } },
-        { 'review.status': null },
-      ];
-    } else if (reviewStatus !== 'all') {
-      query['review.status'] = reviewStatus;
-    }
-
-    const rides = await Ride.find(query)
-      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
-      .populate('passengerId', 'fullName email phoneNumber')
-      .sort({ 'review.submittedAt': -1, 'review.reviewedAt': -1, createdAt: -1 })
-      .limit(100)
+    const rides = await Ride.find()
+      .populate('driverId', 'fullName email phoneNumber emergencyContact profileImageUrl status isOnline vehicle')
+      .populate('passengerId', 'fullName email phoneNumber profileImageUrl status')
+      .sort({ createdAt: -1 })
+      .limit(150)
       .lean();
 
     return res.status(200).json({
-      reviews: rides.map(normalizeAdminReview).filter(Boolean),
+      trips: rides.map(normalizeRideForAdmin),
     });
   } catch (error) {
-    console.error('[rideController] listRideReviewsForAdmin error:', error);
-    return res.status(500).json({ message: error.message || 'Unable to load ride reviews' });
-  }
-};
-
-const moderateRideReview = async (req, res) => {
-  try {
-    const status = String(req.body?.status || '').toLowerCase();
-    if (!['approved', 'rejected', 'review'].includes(status)) {
-      return res.status(400).json({ message: 'status must be approved, rejected, or review' });
-    }
-
-    const ride = await Ride.findById(req.params.id)
-      .populate('driverId', 'fullName phoneNumber profileImageUrl vehicle')
-      .populate('passengerId', 'fullName email phoneNumber');
-
-    if (!ride?.review?.rating) {
-      return res.status(404).json({ message: 'Review not found' });
-    }
-
-    ride.review.status = status;
-    ride.review.moderatedAt = new Date();
-    await ride.save();
-
-    return res.status(200).json({
-      review: normalizeAdminReview(ride),
-    });
-  } catch (error) {
-    console.error('[rideController] moderateRideReview error:', error);
-    return res.status(500).json({ message: error.message || 'Unable to update review status' });
+    console.error('[rideController] listTripsForAdmin error:', error);
+    return res.status(500).json({ message: error.message || 'Unable to load trips' });
   }
 };
 
 module.exports = {
+  createRide,
   getMyRides,
   getDriverRides,
-  listRideReviewsForDriver,
   getRideById,
   getArrivalCode,
   cancelRide,
-  submitRideReview,
-  deleteRideReview,
-  listRideReviewsForAdmin,
-  moderateRideReview,
+  confirmRidePayment,
+  listTripsForAdmin,
+  calculateAdminCommission,
 };

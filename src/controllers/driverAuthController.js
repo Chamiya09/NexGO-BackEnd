@@ -4,6 +4,9 @@ const mongoose = require('mongoose');
 
 const Driver = require('../models/Driver');
 const Ride = require('../models/Ride');
+const { emitDriverAccountStatus } = require('../sockets/rideSocket');
+
+const ADMIN_COMMISSION_RATE = 0.2;
 
 const buildDriverResponse = (driver) => ({
   id: driver._id,
@@ -14,9 +17,13 @@ const buildDriverResponse = (driver) => ({
   profileImageUrl: driver.profileImageUrl || '',
   status: driver.status,
   isOnline: Boolean(driver.isOnline),
+  availabilityStatus: driver.availabilityStatus || (driver.isOnline ? 'Available' : 'Offline'),
+  currentLocation: driver.currentLocation || null,
+  locationUpdatedAt: driver.locationUpdatedAt || null,
   documents: driver.documents || [],
   vehicle: driver.vehicle || null,
   security: driver.security || {},
+  totalCashedOut: driver.totalCashedOut || 0,
 });
 
 const buildPublicDriverResponse = (driver, stats = {}) => ({
@@ -42,6 +49,12 @@ const getTokenFromRequest = (req) => {
   return authHeader.split(' ')[1];
 };
 
+const getSessionDriverId = (req) => {
+  if (!req?.session) return null;
+  if (req.session.role !== 'driver') return null;
+  return req.session.driverId || null;
+};
+
 const signDriverToken = (driver) =>
   jwt.sign(
     {
@@ -54,16 +67,21 @@ const signDriverToken = (driver) =>
 
 const getAuthenticatedDriver = async (req) => {
   const token = getTokenFromRequest(req);
-  if (!token) {
+  if (token) {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.role !== 'driver') {
+      return null;
+    }
+
+    return Driver.findById(decoded.id);
+  }
+
+  const sessionDriverId = getSessionDriverId(req);
+  if (!sessionDriverId) {
     return null;
   }
 
-  const decoded = jwt.verify(token, process.env.JWT_SECRET);
-  if (decoded.role !== 'driver') {
-    return null;
-  }
-
-  return Driver.findById(decoded.id);
+  return Driver.findById(sessionDriverId);
 };
 
 const normalizeEmail = (email = '') => String(email).trim().toLowerCase();
@@ -102,6 +120,10 @@ const registerDriver = async (req, res) => {
     });
 
     const token = signDriverToken(driver);
+    if (req.session) {
+      req.session.driverId = driver._id.toString();
+      req.session.role = 'driver';
+    }
 
     return res.status(201).json({
       message: 'Driver registered successfully',
@@ -149,6 +171,10 @@ const loginDriver = async (req, res) => {
     }
 
     const token = signDriverToken(driver);
+    if (req.session) {
+      req.session.driverId = driver._id.toString();
+      req.session.role = 'driver';
+    }
 
     return res.status(200).json({
       message: 'Driver login successful',
@@ -172,6 +198,33 @@ const getDriverMe = async (req, res) => {
   } catch (error) {
     return res.status(401).json({ message: 'Invalid or expired token' });
   }
+};
+
+const getDriverSession = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    return res.status(200).json({ driver: buildDriverResponse(driver) });
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid or expired session' });
+  }
+};
+
+const logoutDriver = async (req, res) => {
+  if (!req.session) {
+    return res.status(200).json({ message: 'Logged out' });
+  }
+
+  req.session.destroy((error) => {
+    if (error) {
+      return res.status(500).json({ message: 'Unable to log out' });
+    }
+
+    return res.status(200).json({ message: 'Logged out' });
+  });
 };
 
 const listDrivers = async (_req, res) => {
@@ -384,6 +437,98 @@ const updateDriverDocument = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Unable to update driver document' });
+  }
+};
+
+const updateDriverStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const nextStatus = String(req.body.status || '').trim().toLowerCase();
+    const allowedStatuses = ['pending', 'active', 'suspended'];
+
+    if (!allowedStatuses.includes(nextStatus)) {
+      return res.status(400).json({ message: 'status must be pending, active, or suspended' });
+    }
+
+    const driver = await Driver.findById(id);
+    if (!driver) {
+      return res.status(404).json({ message: 'Driver not found' });
+    }
+
+    driver.status = nextStatus;
+    if (nextStatus === 'suspended') {
+      driver.isOnline = false;
+      driver.availabilityStatus = 'Offline';
+    }
+
+    await driver.save();
+
+    const io = req.app?.get?.('io');
+    if (io) {
+      emitDriverAccountStatus(io, driver._id, driver.status);
+    }
+
+    return res.status(200).json({
+      message: 'Driver status updated',
+      driver: buildDriverResponse(driver),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to update driver status' });
+  }
+};
+
+const reviewDriverDocument = async (req, res) => {
+  try {
+    const { id, documentType } = req.params;
+    const { status, rejectionReason } = req.body;
+
+    const allowedTypes = ['license', 'insurance', 'registration'];
+    if (!allowedTypes.includes(documentType)) {
+      return res.status(400).json({ message: 'documentType must be license, insurance, or registration' });
+    }
+
+    const validStatuses = ['approved', 'rejected'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: 'status must be approved or rejected' });
+    }
+
+    const driver = await Driver.findById(id);
+    if (!driver) {
+      return res.status(404).json({ message: 'Driver not found' });
+    }
+
+    const documents = driver.documents || [];
+    let documentIndex = documents.findIndex((doc) => doc.documentType === documentType);
+
+    if (documentIndex === -1) {
+      return res.status(404).json({ message: 'Document not found on this driver' });
+    }
+
+    documents[documentIndex].status = status;
+    documents[documentIndex].reviewedAt = new Date();
+    documents[documentIndex].rejectionReason = status === 'rejected' ? (rejectionReason || 'Rejected by Admin') : '';
+    
+    // Auto-approve driver if all documents are approved
+    const allApproved = allowedTypes.every(type => {
+      const doc = documents.find(d => d.documentType === type);
+      return doc && doc.status === 'approved';
+    });
+
+    if (allApproved && driver.status === 'pending') {
+      driver.status = 'active';
+    } else if (!allApproved && driver.status === 'active') {
+      driver.status = 'pending';
+    }
+
+    driver.documents = documents;
+    await driver.save();
+
+    return res.status(200).json({
+      message: `Document ${status} successfully`,
+      driver: buildDriverResponse(driver),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to review driver document' });
   }
 };
 
@@ -625,19 +770,78 @@ const changeDriverPassword = async (req, res) => {
   }
 };
 
+const processDriverCheckout = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    if (!driver) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const amount = Number(req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid cashout amount' });
+    }
+
+    const [statsResult] = await Ride.aggregate([
+      {
+        $match: {
+          driverId: driver._id,
+          status: { $in: ['Completed', 'completed'] },
+        },
+      },
+      {
+        $group: {
+          _id: '$driverId',
+          totalEarned: {
+            $sum: {
+              $cond: [
+                { $gt: ['$driverEarnings', 0] },
+                '$driverEarnings',
+                { $subtract: ['$price', { $multiply: ['$price', ADMIN_COMMISSION_RATE] }] }
+              ]
+            }
+          },
+        },
+      },
+    ]);
+
+    const totalEarned = statsResult?.totalEarned || 0;
+    const availableBalance = Math.max(0, totalEarned - (driver.totalCashedOut || 0));
+
+    if (amount > availableBalance) {
+      return res.status(400).json({ message: 'Insufficient available balance' });
+    }
+
+    driver.totalCashedOut = (driver.totalCashedOut || 0) + amount;
+    await driver.save();
+
+    return res.status(200).json({
+      message: 'Checkout successful',
+      driver: buildDriverResponse(driver),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to process checkout' });
+  }
+};
+
 module.exports = {
   registerDriver,
   loginDriver,
   getDriverMe,
+  getDriverSession,
   getPublicDriverProfile,
   getRidePublicDriverProfile,
   listDrivers,
   updateDriverMe,
   updateDriverDocument,
+  reviewDriverDocument,
+  updateDriverStatus,
   getDriverVehicle,
   createDriverVehicle,
   updateDriverVehicle,
   deleteDriverVehicle,
   updateDriverSecurity,
   changeDriverPassword,
+  logoutDriver,
+  processDriverCheckout,
 };

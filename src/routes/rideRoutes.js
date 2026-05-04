@@ -1,23 +1,32 @@
 // src/routes/rideRoutes.js
 const express = require('express');
+const { requireAdmin } = require('../middleware/adminAuth');
 const {
+  createRide,
   getMyRides,
   getDriverRides,
-  listRideReviewsForDriver,
   getRideById,
   getArrivalCode,
   cancelRide,
+  confirmRidePayment,
+  listTripsForAdmin,
+} = require('../controllers/rideController');
+const {
+  listRideReviewsForDriver,
   submitRideReview,
   deleteRideReview,
   listRideReviewsForAdmin,
   moderateRideReview,
-} = require('../controllers/rideController');
+} = require('../controllers/reviewController');
 const {
   getPublicDriverProfile,
   getRidePublicDriverProfile,
 } = require('../controllers/driverAuthController');
 
 const router = express.Router();
+
+// POST /api/rides - passenger creates a ride request through REST
+router.post('/', createRide);
 
 // GET /api/rides/my-rides - passenger's own ride history
 router.get('/my-rides', getMyRides);
@@ -28,11 +37,14 @@ router.get('/driver-rides', getDriverRides);
 // GET /api/rides/driver-reviews - approved passenger reviews for current driver
 router.get('/driver-reviews', listRideReviewsForDriver);
 
+// GET /api/rides/admin/trips - admin system-wide trips and activities
+router.get('/admin/trips', requireAdmin, listTripsForAdmin);
+
 // GET /api/rides/admin/reviews - admin review and rating moderation queue
-router.get('/admin/reviews', listRideReviewsForAdmin);
+router.get('/admin/reviews', requireAdmin, listRideReviewsForAdmin);
 
 // PATCH /api/rides/admin/reviews/:id - admin approves, rejects, or reopens a ride review
-router.patch('/admin/reviews/:id', moderateRideReview);
+router.patch('/admin/reviews/:id', requireAdmin, moderateRideReview);
 
 // GET /api/rides/drivers/:id/public-profile - public passenger view of driver profile
 router.get('/drivers/:id/public-profile', getPublicDriverProfile);
@@ -45,6 +57,9 @@ router.patch('/:id/cancel', cancelRide);
 
 // GET /api/rides/:id/arrival-code - passenger reads arrival verification code
 router.get('/:id/arrival-code', getArrivalCode);
+
+// POST /api/rides/:id/confirm-payment - passenger confirms trip payment
+router.post('/:id/confirm-payment', confirmRidePayment);
 
 // PATCH /api/rides/:id/review - passenger adds or updates a completed ride review
 router.patch('/:id/review', submitRideReview);

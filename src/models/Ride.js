@@ -73,6 +73,14 @@ const rideSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    adminCommission: {
+      type: Number,
+      default: 0,
+    },
+    driverEarnings: {
+      type: Number,
+      default: 0,
+    },
     promotion: {
       promotionId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -112,6 +120,18 @@ const rideSchema = new mongoose.Schema(
     arrivalVerificationExpiresAt: { type: Date, default: null },
     acceptedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
+    paymentMethod: {
+      type: String,
+      enum: ['CASH', 'WALLET'],
+      default: 'CASH',
+    },
+    paymentStatus: {
+      type: String,
+      enum: ['UNPAID', 'PAID'],
+      default: 'UNPAID',
+    },
+    paymentConfirmedAt: { type: Date, default: null },
+    walletBalanceAfter: { type: Number, default: null },
     review: {
       type: reviewSchema,
       default: null,
