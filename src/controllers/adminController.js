@@ -144,6 +144,87 @@ const createAdmin = async (req, res) => {
   }
 };
 
+const updateAdmin = async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+
+    const fullName = String(req.body.fullName || '').trim();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const phoneNumber = String(req.body.phoneNumber || '').trim();
+    const profileImageUrl = String(req.body.profileImageUrl || '').trim();
+    const role = String(req.body.role || '').trim();
+    const scope = String(req.body.scope || '').trim();
+    const office = String(req.body.office || '').trim();
+    const shift = String(req.body.shift || '').trim();
+    const password = String(req.body.password || '');
+
+    if (!fullName || !email) {
+      return res.status(400).json({ message: 'Full name and email are required' });
+    }
+
+    if (password && password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    const existingAdmin = await Admin.findOne({ email, _id: { $ne: admin._id } });
+    if (existingAdmin) {
+      return res.status(409).json({ message: 'Email is already used by another admin' });
+    }
+
+    admin.fullName = fullName;
+    admin.email = email;
+    admin.phoneNumber = phoneNumber;
+    admin.profileImageUrl = profileImageUrl;
+    admin.role = role || 'Operations Admin';
+    admin.scope = scope || 'NexGO Control Center';
+    admin.office = office || 'Colombo HQ';
+    admin.shift = shift || 'Full operations coverage';
+
+    if (password) {
+      admin.password = await bcrypt.hash(password, 10);
+    }
+
+    await admin.save();
+
+    return res.status(200).json({
+      message: 'Admin updated successfully',
+      admin: normalizeAdmin(admin),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to update admin' });
+  }
+};
+
+const deleteAdmin = async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+
+    if (String(admin._id) === String(req.admin?._id)) {
+      return res.status(400).json({ message: 'You cannot delete your own admin account.' });
+    }
+
+    const adminCount = await Admin.countDocuments();
+    if (adminCount <= 1) {
+      return res.status(400).json({ message: 'At least one admin account is required.' });
+    }
+
+    await admin.deleteOne();
+
+    return res.status(200).json({
+      message: 'Admin deleted successfully',
+      id: req.params.id,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to delete admin' });
+  }
+};
+
 const updateAdminProfile = async (req, res) => {
   try {
     const fullName = String(req.body.fullName || '').trim();
@@ -218,6 +299,8 @@ module.exports = {
   getAdminProfile,
   listAdmins,
   createAdmin,
+  updateAdmin,
+  deleteAdmin,
   updateAdminProfile,
   changeAdminPassword,
 };
