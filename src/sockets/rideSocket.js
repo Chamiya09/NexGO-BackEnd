@@ -327,6 +327,120 @@ function emitPassengerLifecycle(io, ride, eventName, extra = {}) {
   emitToPassenger(io, ride.passengerId, 'rideStatusUpdate', payload);
 }
 
+async function broadcastRideRequestToNearbyDrivers(io, ride, options = {}) {
+  if (DISABLE_DRIVER_REQUESTS) {
+    return {
+      ok: false,
+      code: 'DRIVER_REQUESTS_DISABLED',
+      message: 'Driver requests are temporarily disabled.',
+      notifiedSocketIds: [],
+    };
+  }
+
+  const requestedVehicleType = normalizeVehicleCategory(ride.vehicleType);
+
+  if (!ALLOWED_VEHICLE_CATEGORIES.has(requestedVehicleType)) {
+    return {
+      ok: false,
+      code: 'INVALID_VEHICLE_CATEGORY',
+      message: 'Please select a valid vehicle category.',
+      notifiedSocketIds: [],
+    };
+  }
+
+  const pickup = ride.pickup;
+  const matchingDrivers = [];
+
+  for (const { driverSocketId, location } of getOnlineDriverLocations(requestedVehicleType)) {
+    const dist = haversineDistanceKm(
+      pickup.latitude,
+      pickup.longitude,
+      location.latitude,
+      location.longitude
+    );
+
+    matchingDrivers.push({ driverSocketId, driverId: location.driverId, distanceKm: dist });
+  }
+
+  const nearbyDrivers = matchingDrivers
+    .filter((driver) => driver.distanceKm <= DRIVER_REQUEST_RADIUS_KM)
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+    .filter((driver) => {
+      const currentLocation = driverLocationMap.get(driver.driverSocketId);
+      return currentLocation?.isOnline && hasValidCoords(currentLocation);
+    });
+
+  if (nearbyDrivers.length === 0) {
+    const onlineCategories = Array.from(driverLocationMap.values())
+      .filter((location) => location.isOnline)
+      .map((location) => normalizeVehicleCategory(location.vehicleCategory) || 'Unknown');
+
+    console.warn(
+      `[Socket.IO] No online ${requestedVehicleType} drivers found within ${DRIVER_REQUEST_RADIUS_KM} km for passengerId=${ride.passengerId}. Online categories: ${onlineCategories.join(', ') || 'none'}`
+    );
+
+    return {
+      ok: false,
+      code: 'NO_MATCHING_DRIVER',
+      message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
+      notifiedSocketIds: [],
+    };
+  }
+
+  const passenger = await User.findById(ride.passengerId).select('fullName profileImageUrl').lean();
+  const rideData = {
+    rideId: ride._id.toString(),
+    passengerId: String(ride.passengerId),
+    passengerName: options.passengerName ?? passenger?.fullName ?? 'Passenger',
+    passengerImage: passenger?.profileImageUrl || '',
+    vehicleType: requestedVehicleType,
+    price: ride.price,
+    paymentMethod: ride.paymentMethod === 'WALLET' ? 'WALLET' : 'CASH',
+    promotion: ride.promotion?.promotionId
+      ? {
+          code: ride.promotion.code,
+          discountAmount: ride.promotion.discountAmount,
+          originalPrice: ride.promotion.originalPrice,
+        }
+      : null,
+    pickup: ride.pickup,
+    dropoff: ride.dropoff,
+    requestedAt: ride.createdAt,
+    status: ride.status,
+    canonicalStatus: 'PENDING',
+  };
+
+  const notifiedSocketIds = [];
+  for (const driver of nearbyDrivers) {
+    const currentLocation = driverLocationMap.get(driver.driverSocketId);
+    if (!currentLocation?.isOnline || !hasValidCoords(currentLocation)) continue;
+
+    console.log(
+      `[Socket.IO] Driver ${driver.driverId} is ${driver.distanceKm.toFixed(2)} km away - online and within request range`
+    );
+    io.to(driver.driverSocketId).emit('incomingRide', rideData);
+    io.to(driver.driverSocketId).emit('newRideRequest', rideData);
+    notifiedSocketIds.push(driver.driverSocketId);
+  }
+
+  if (notifiedSocketIds.length === 0) {
+    return {
+      ok: false,
+      code: 'NO_MATCHING_DRIVER',
+      message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
+      notifiedSocketIds: [],
+    };
+  }
+
+  rideRecipientSocketMap.set(rideData.rideId, new Set(notifiedSocketIds));
+
+  console.log(
+    `[Socket.IO] incomingRide sent to ${notifiedSocketIds.length} matching driver(s) for rideId=${rideData.rideId}`
+  );
+
+  return { ok: true, notifiedSocketIds, rideData };
+}
+
 async function handleStrictTransition(io, socket, payload, options) {
   const { rideId, driverId } = payload || {};
 
@@ -527,159 +641,15 @@ function initRideSocket(io) {
     socket.on('requestRide', async (payload) => {
       console.log('[Socket.IO] requestRide received:', payload);
 
-      if (DISABLE_DRIVER_REQUESTS) {
-        socket.emit('rideError', {
-          code: 'DRIVER_REQUESTS_DISABLED',
-          message: 'Driver requests are temporarily disabled.',
-        });
-        return;
-      }
-
-      try {
-        const { passengerId, passengerName, vehicleType, price, pickup, dropoff, promotion, paymentMethod } = payload;
+      const { passengerId } = payload || {};
+      if (passengerId) {
         registerPassengerSocket(socket, passengerId);
-        const requestedVehicleType = normalizeVehicleCategory(vehicleType);
-
-        if (!ALLOWED_VEHICLE_CATEGORIES.has(requestedVehicleType)) {
-          socket.emit('rideError', {
-            code: 'INVALID_VEHICLE_CATEGORY',
-            message: 'Please select a valid vehicle category.',
-          });
-          return;
-        }
-
-        const basePrice = calculateRideBasePrice({
-          vehicleType: requestedVehicleType,
-          pickup,
-          dropoff,
-        });
-
-        const promotionUsage = await buildPromotionUsage({
-          passengerId,
-          requestedVehicleType,
-          payloadPromotion: promotion,
-          fallbackPrice: Number.isFinite(basePrice) && basePrice > 0 ? basePrice : price,
-        });
-
-        if (promotionUsage.error) {
-          socket.emit('rideError', promotionUsage.error);
-          return;
-        }
-
-        const ridePrice = promotionUsage.finalPrice;
-
-        const matchingDrivers = [];
-
-        for (const { driverSocketId, location } of getOnlineDriverLocations(requestedVehicleType)) {
-          if (driverSocketId === socket.id) continue;
-
-          const dist = haversineDistanceKm(
-            pickup.latitude,
-            pickup.longitude,
-            location.latitude,
-            location.longitude
-          );
-
-          matchingDrivers.push({ driverSocketId, driverId: location.driverId, distanceKm: dist });
-        }
-
-        const nearbyDrivers = matchingDrivers
-          .filter((driver) => driver.distanceKm <= DRIVER_REQUEST_RADIUS_KM)
-          .sort((a, b) => a.distanceKm - b.distanceKm)
-          .filter((driver) => {
-            const currentLocation = driverLocationMap.get(driver.driverSocketId);
-            return currentLocation?.isOnline && hasValidCoords(currentLocation);
-          });
-
-        if (nearbyDrivers.length === 0) {
-          const onlineCategories = Array.from(driverLocationMap.values())
-            .filter((location) => location.isOnline)
-            .map((location) => normalizeVehicleCategory(location.vehicleCategory) || 'Unknown');
-
-          console.warn(
-            `[Socket.IO] No online ${requestedVehicleType} drivers found within ${DRIVER_REQUEST_RADIUS_KM} km for passengerId=${passengerId}. Online categories: ${onlineCategories.join(', ') || 'none'}`
-          );
-          socket.emit('rideError', {
-            code: 'NO_MATCHING_DRIVER',
-            message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
-          });
-          return;
-        }
-
-        const adminCommission = Math.max(0, Math.round(ridePrice * ADMIN_COMMISSION_RATE));
-        const driverEarnings = Math.max(0, ridePrice - adminCommission);
-
-        const ride = await Ride.create({
-          passengerId,
-          vehicleType: requestedVehicleType,
-          price: ridePrice,
-          adminCommission,
-          driverEarnings,
-          pickup,
-          dropoff,
-          ...(promotionUsage.promotionSnapshot && { promotion: promotionUsage.promotionSnapshot }),
-          status: RIDE_STATUS.PENDING,
-          paymentMethod: paymentMethod === 'WALLET' ? 'WALLET' : 'CASH',
-        });
-
-        const passenger = await User.findById(passengerId).select('profileImageUrl').lean();
-        const rideData = {
-          rideId: ride._id.toString(),
-          passengerId,
-          passengerName: passengerName ?? 'Passenger',
-          passengerImage: passenger?.profileImageUrl || '',
-          vehicleType: requestedVehicleType,
-          price: ridePrice,
-          paymentMethod: paymentMethod === 'WALLET' ? 'WALLET' : 'CASH',
-          promotion: promotionUsage.promotionSnapshot
-            ? {
-                code: promotionUsage.promotionSnapshot.code,
-                discountAmount: promotionUsage.promotionSnapshot.discountAmount,
-                originalPrice: promotionUsage.promotionSnapshot.originalPrice,
-              }
-            : null,
-          pickup,
-          dropoff,
-          requestedAt: ride.createdAt,
-          status: ride.status,
-          canonicalStatus: 'PENDING',
-        };
-
-        const notifiedSocketIds = [];
-        for (const driver of nearbyDrivers) {
-          const currentLocation = driverLocationMap.get(driver.driverSocketId);
-          if (!currentLocation?.isOnline || !hasValidCoords(currentLocation)) continue;
-
-          console.log(
-            `[Socket.IO] Driver ${driver.driverId} is ${driver.distanceKm.toFixed(2)} km away - online and within request range`
-          );
-          io.to(driver.driverSocketId).emit('incomingRide', rideData);
-          notifiedSocketIds.push(driver.driverSocketId);
-        }
-
-        if (notifiedSocketIds.length === 0) {
-          await Ride.findByIdAndDelete(ride._id);
-          socket.emit('rideError', {
-            code: 'NO_MATCHING_DRIVER',
-            message: `No online ${requestedVehicleType} drivers found nearby. Please try another category or try again later.`,
-          });
-          return;
-        }
-
-        socket.emit('rideCreated', { rideId: rideData.rideId });
-
-        rideRecipientSocketMap.set(rideData.rideId, new Set(notifiedSocketIds));
-
-        console.log(
-          `[Socket.IO] incomingRide sent to ${notifiedSocketIds.length} matching driver(s) for rideId=${rideData.rideId}`
-        );
-      } catch (error) {
-        console.error('[Socket.IO] requestRide error:', error);
-        socket.emit('rideError', {
-          code: 'CREATE_RIDE_FAILED',
-          message: getRideErrorMessage(error),
-        });
       }
+
+      socket.emit('rideError', {
+        code: 'REST_RIDE_CREATE_REQUIRED',
+        message: 'Ride creation now uses POST /api/rides. Please update the app and try again.',
+      });
     });
 
     socket.on('acceptRide', async (payload) => {
@@ -945,7 +915,11 @@ function initRideSocket(io) {
 
 module.exports = {
   initRideSocket,
+  broadcastRideRequestToNearbyDrivers,
+  buildPromotionUsage,
+  calculateRideBasePrice,
   emitRemoveRideRequest,
   emitPassengerAccountStatus,
   emitDriverAccountStatus,
+  normalizeVehicleCategory,
 };

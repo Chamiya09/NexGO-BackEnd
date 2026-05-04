@@ -4,7 +4,13 @@
 const jwt = require('jsonwebtoken');
 const Ride = require('../models/Ride');
 const User = require('../models/User');
-const { emitRemoveRideRequest } = require('../sockets/rideSocket');
+const {
+  broadcastRideRequestToNearbyDrivers,
+  buildPromotionUsage,
+  calculateRideBasePrice,
+  emitRemoveRideRequest,
+  normalizeVehicleCategory,
+} = require('../sockets/rideSocket');
 const {
   toCanonicalStatus,
   RIDE_STATUS,
@@ -135,19 +141,69 @@ const createRide = async (req, res) => {
       return res.status(401).json({ message: 'Unauthorized' });
     }
 
-    const { pickup, dropoff, vehicleType, price, paymentMethod } = req.body;
+    const { pickup, dropoff, vehicleType, price, paymentMethod, promotion, passengerName } = req.body;
+    const requestedVehicleType = normalizeVehicleCategory(vehicleType);
+    const allowedVehicleTypes = Ride.schema.path('vehicleType').enumValues;
+
+    if (!allowedVehicleTypes.includes(requestedVehicleType)) {
+      return res.status(400).json({
+        code: 'INVALID_VEHICLE_CATEGORY',
+        message: 'Please select a valid vehicle category.',
+      });
+    }
+
+    const basePrice = calculateRideBasePrice({
+      vehicleType: requestedVehicleType,
+      pickup,
+      dropoff,
+    });
+    const promotionUsage = await buildPromotionUsage({
+      passengerId: decoded.id,
+      requestedVehicleType,
+      payloadPromotion: promotion,
+      fallbackPrice: Number.isFinite(basePrice) && basePrice > 0 ? basePrice : price,
+    });
+
+    if (promotionUsage.error) {
+      return res.status(400).json(promotionUsage.error);
+    }
+
+    const ridePrice = promotionUsage.finalPrice;
+    const adminCommission = calculateAdminCommission(ridePrice);
 
     const ride = new Ride({
       passengerId: decoded.id,
       pickup,
       dropoff,
-      vehicleType,
-      price,
-      paymentMethod: paymentMethod || 'CASH',
+      vehicleType: requestedVehicleType,
+      price: ridePrice,
+      adminCommission,
+      driverEarnings: Math.max(0, ridePrice - adminCommission),
+      ...(promotionUsage.promotionSnapshot && { promotion: promotionUsage.promotionSnapshot }),
+      paymentMethod: paymentMethod === 'WALLET' ? 'WALLET' : 'CASH',
       status: 'Pending',
     });
 
     await ride.save();
+
+    const io = req.app.get('io');
+    if (io) {
+      const dispatchResult = await broadcastRideRequestToNearbyDrivers(io, ride, { passengerName });
+      if (!dispatchResult.ok) {
+        await Ride.findByIdAndDelete(ride._id);
+        const statusCode =
+          dispatchResult.code === 'NO_MATCHING_DRIVER'
+            ? 404
+            : dispatchResult.code === 'DRIVER_REQUESTS_DISABLED'
+              ? 503
+              : 400;
+
+        return res.status(statusCode).json({
+          code: dispatchResult.code,
+          message: dispatchResult.message,
+        });
+      }
+    }
 
     return res.status(201).json({
       message: 'Ride created successfully.',

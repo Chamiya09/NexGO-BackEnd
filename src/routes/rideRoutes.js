@@ -2,6 +2,7 @@
 const express = require('express');
 const { requireAdmin } = require('../middleware/adminAuth');
 const {
+  createRide,
   getMyRides,
   getDriverRides,
   getRideById,
@@ -23,6 +24,9 @@ const {
 } = require('../controllers/driverAuthController');
 
 const router = express.Router();
+
+// POST /api/rides - passenger creates a ride request through REST
+router.post('/', createRide);
 
 // GET /api/rides/my-rides - passenger's own ride history
 router.get('/my-rides', getMyRides);
