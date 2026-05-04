@@ -5,11 +5,13 @@ const mongoose = require('mongoose');
 const Driver = require('../models/Driver');
 const Ride = require('../models/Ride');
 const { emitDriverAccountStatus } = require('../sockets/rideSocket');
+const { buildReadableId } = require('../utils/readableId');
 
 const ADMIN_COMMISSION_RATE = 0.2;
 
 const buildDriverResponse = (driver) => ({
   id: driver._id,
+  readableId: driver.readableId || buildReadableId('DRV', driver._id),
   fullName: driver.fullName,
   email: driver.email,
   phoneNumber: driver.phoneNumber,
@@ -28,6 +30,7 @@ const buildDriverResponse = (driver) => ({
 
 const buildPublicDriverResponse = (driver, stats = {}) => ({
   id: driver._id,
+  readableId: driver.readableId || buildReadableId('DRV', driver._id),
   fullName: driver.fullName,
   phoneNumber: driver.phoneNumber,
   profileImageUrl: driver.profileImageUrl || '',
@@ -64,6 +67,14 @@ const signDriverToken = (driver) =>
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
+
+const ensureDriverReadableId = async (driver) => {
+  if (!driver || driver.readableId) return driver;
+
+  driver.readableId = buildReadableId('DRV', driver._id);
+  await driver.save();
+  return driver;
+};
 
 const getAuthenticatedDriver = async (req) => {
   const token = getTokenFromRequest(req);
@@ -230,6 +241,7 @@ const logoutDriver = async (req, res) => {
 const listDrivers = async (_req, res) => {
   try {
     const drivers = await Driver.find().sort({ createdAt: -1 });
+    await Promise.all(drivers.map(ensureDriverReadableId));
 
     return res.status(200).json({
       drivers: drivers.map(buildDriverResponse),

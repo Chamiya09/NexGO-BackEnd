@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { buildReadableId } = require('../utils/readableId');
 
 const paymentMethodSchema = new mongoose.Schema(
   {
@@ -135,6 +136,12 @@ const userSchema = new mongoose.Schema(
       trim: true,
       minlength: [2, 'Full name must be at least 2 characters long'],
     },
+    readableId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
     email: {
       type: String,
       required: true,
@@ -207,6 +214,10 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.pre('save', async function preSave() {
+  if (!this.readableId) {
+    this.readableId = buildReadableId('PAS', this._id);
+  }
+
   if (!this.isModified('password')) {
     return;
   }
