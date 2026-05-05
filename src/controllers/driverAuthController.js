@@ -579,8 +579,8 @@ const buildVehiclePayload = (body) => {
     return { error: 'category must be Bike, Tuk, Mini, Car, or Van' };
   }
 
-  if (!Number.isInteger(year) || year < 1980 || year > 2100) {
-    return { error: 'Enter a valid manufacture year.' };
+  if (!Number.isInteger(year) || year <= 1980 || year > 2100) {
+    return { error: 'Vehicle manufacture year must be after 1980.' };
   }
 
   if (!Number.isInteger(seats) || seats < 1 || seats > 60) {
