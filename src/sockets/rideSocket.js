@@ -911,11 +911,7 @@ function initRideSocket(io) {
     socket.on('cancelRide', async ({ rideId }) => {
       console.log('[Socket.IO] cancelRide received:', rideId);
       try {
-        const ride = await Ride.findByIdAndUpdate(
-          rideId,
-          { status: RIDE_STATUS.CANCELLED, cancelledAt: new Date() },
-          { new: true }
-        );
+        const ride = await Ride.findByIdAndDelete(rideId);
 
         if (!ride) {
           socket.emit('rideError', { message: `Ride ${rideId} not found.` });
@@ -924,8 +920,8 @@ function initRideSocket(io) {
 
         const payload = {
           rideId,
-          status: RIDE_STATUS.CANCELLED,
-          canonicalStatus: 'CANCELLED',
+          status: 'Deleted',
+          canonicalStatus: 'DELETED',
         };
 
         emitRemoveRideRequest(io, rideId, { reason: 'cancelled' });

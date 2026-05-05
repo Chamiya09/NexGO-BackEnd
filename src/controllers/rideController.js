@@ -303,8 +303,8 @@ const getRideById = async (req, res) => {
   }
 };
 
-// ── PATCH /api/rides/:id/cancel ───────────────────────────────────
-// Passenger cancels their own Pending or Accepted ride.
+// DELETE /api/rides/:id
+// Passenger hard-deletes their own Pending or Accepted ride.
 const getArrivalCode = async (req, res) => {
   try {
     const decoded = getAuthenticatedUser(req);
@@ -362,16 +362,18 @@ const cancelRide = async (req, res) => {
       });
     }
 
-    ride.status = 'Cancelled';
-    ride.cancelledAt = new Date();
-    await ride.save();
+    const deletedRide = await Ride.findByIdAndDelete(ride._id);
 
     const io = req.app.get('io');
     if (io) {
       emitRemoveRideRequest(io, ride._id.toString(), { reason: 'cancelled' });
     }
 
-    return res.status(200).json({ ride: normalizeRide(ride) });
+    return res.status(200).json({
+      message: 'Ride deleted successfully.',
+      rideId: ride._id.toString(),
+      ride: deletedRide ? normalizeRide(deletedRide) : normalizeRide(ride),
+    });
   } catch (error) {
     if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
       return res.status(401).json({ message: 'Invalid or expired token' });

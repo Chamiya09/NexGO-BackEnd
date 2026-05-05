@@ -52,8 +52,8 @@ router.get('/drivers/:id/public-profile', getPublicDriverProfile);
 // GET /api/rides/:id/driver-public-profile - public passenger view using the ride's assigned driver
 router.get('/:id/driver-public-profile', getRidePublicDriverProfile);
 
-// PATCH /api/rides/:id/cancel - passenger cancels their ride
-router.patch('/:id/cancel', cancelRide);
+// DELETE /api/rides/:id - passenger deletes their ride
+router.delete('/:id', cancelRide);
 
 // GET /api/rides/:id/arrival-code - passenger reads arrival verification code
 router.get('/:id/arrival-code', getArrivalCode);
