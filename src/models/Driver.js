@@ -70,7 +70,7 @@ const vehicleSchema = new mongoose.Schema(
     year: {
       type: Number,
       required: true,
-      min: [1980, 'Vehicle year must be 1980 or later'],
+      min: [1981, 'Vehicle manufacture year must be after 1980'],
       max: [2100, 'Vehicle year is not valid'],
     },
     plateNumber: {
