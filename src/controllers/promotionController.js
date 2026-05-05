@@ -1,0 +1,252 @@
+const jwt = require('jsonwebtoken');
+const Promotion = require('../models/Promotion');
+const Ride = require('../models/Ride');
+
+const toNumber = (value, fallback = 0) => {
+  if (value === 'Unlimited') {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const toDateOrNull = (value) => {
+  if (!value || value === 'No end date') {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getPromotionImageUrl = (promotion) =>
+  promotion.imageUrl ||
+  promotion.get?.('image') ||
+  promotion.get?.('imageURL') ||
+  promotion.get?.('fileUrl') ||
+  promotion.get?.('secureUrl') ||
+  promotion.get?.('url') ||
+  '';
+
+const buildPromotionResponse = (promotion) => ({
+  id: promotion._id.toString(),
+  name: promotion.name,
+  code: promotion.code,
+  discountType: promotion.discountType,
+  discountValue: String(promotion.discountValue),
+  imageUrl: getPromotionImageUrl(promotion),
+  endDate: promotion.endDate ? promotion.endDate.toISOString().slice(0, 10) : 'No end date',
+  status: promotion.status,
+  active: promotion.active,
+});
+
+const getAuthenticatedUser = (req) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.split(' ')[1];
+  return jwt.verify(token, process.env.JWT_SECRET);
+};
+
+const listPromotions = async (_req, res) => {
+  try {
+    const promotions = await Promotion.find().sort({ createdAt: -1 });
+    return res.status(200).json({
+      promotions: promotions.map(buildPromotionResponse),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to load promotions' });
+  }
+};
+
+const validatePromotion = async (req, res) => {
+  try {
+    const decoded = getAuthenticatedUser(req);
+    if (!decoded) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const normalizedCode = String(req.params.code || '').trim().toUpperCase();
+    if (!normalizedCode) {
+      return res.status(400).json({ message: 'Promo code is required.' });
+    }
+
+    const promotion = await Promotion.findOne({ code: normalizedCode });
+    if (!promotion) {
+      return res.status(404).json({ message: 'Promo code not found.' });
+    }
+
+    if (!promotion.active || promotion.status !== 'Active') {
+      return res.status(400).json({ message: 'Promo code is not active.' });
+    }
+
+    if (promotion.endDate && promotion.endDate.getTime() < Date.now()) {
+      return res.status(400).json({ message: 'Promo code has expired.' });
+    }
+
+    const alreadyUsed = await Ride.exists({
+      passengerId: decoded.id,
+      'promotion.promotionId': promotion._id,
+    });
+
+    if (alreadyUsed) {
+      return res.status(409).json({ message: 'You have already used this promo code.' });
+    }
+
+    return res.status(200).json({ promotion: buildPromotionResponse(promotion) });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Invalid or expired token' });
+    }
+    return res.status(500).json({ message: error.message || 'Unable to validate promotion' });
+  }
+};
+
+const createPromotion = async (req, res) => {
+  try {
+    const {
+      name,
+      code,
+      discountType = 'Percentage',
+      discountValue,
+      imageUrl = '',
+      endDate,
+      active = true,
+      status,
+    } = req.body;
+
+    const normalizedName = String(name || '').trim();
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    const normalizedDiscountType = discountType === 'Fixed' ? 'Fixed' : 'Percentage';
+    const numericDiscountValue = toNumber(discountValue);
+
+    if (!normalizedName || !normalizedCode || !numericDiscountValue) {
+      return res.status(400).json({ message: 'Promotion name, promo code, and discount value are required.' });
+    }
+
+    const existingPromotion = await Promotion.findOne({ code: normalizedCode });
+    if (existingPromotion) {
+      return res.status(400).json({ message: 'A promotion with this promo code already exists.' });
+    }
+
+    const nextActive = Boolean(active);
+    const nextStatus = nextActive ? (status === 'Scheduled' ? 'Scheduled' : 'Active') : 'Paused';
+
+    const promotion = await Promotion.create({
+      name: normalizedName,
+      code: normalizedCode,
+      discountType: normalizedDiscountType,
+      discountValue: numericDiscountValue,
+      imageUrl: String(imageUrl || '').trim(),
+      endDate: toDateOrNull(endDate),
+      status: nextStatus,
+      active: nextActive,
+    });
+
+    return res.status(201).json({
+      message: 'Promotion created successfully.',
+      promotion: buildPromotionResponse(promotion),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to create promotion' });
+  }
+};
+
+const updatePromotion = async (req, res) => {
+  try {
+    const promotion = await Promotion.findById(req.params.id);
+    if (!promotion) {
+      return res.status(404).json({ message: 'Promotion not found.' });
+    }
+
+    const {
+      name,
+      code,
+      discountType,
+      discountValue,
+      imageUrl,
+      endDate,
+      active,
+      status,
+    } = req.body;
+
+    if (name !== undefined) {
+      const normalizedName = String(name || '').trim();
+      if (!normalizedName) {
+        return res.status(400).json({ message: 'Promotion name is required.' });
+      }
+      promotion.name = normalizedName;
+    }
+
+    if (code !== undefined) {
+      const normalizedCode = String(code || '').trim().toUpperCase();
+      if (!normalizedCode) {
+        return res.status(400).json({ message: 'Promo code is required.' });
+      }
+
+      const existingPromotion = await Promotion.findOne({
+        _id: { $ne: promotion._id },
+        code: normalizedCode,
+      });
+      if (existingPromotion) {
+        return res.status(400).json({ message: 'A promotion with this promo code already exists.' });
+      }
+
+      promotion.code = normalizedCode;
+    }
+
+    if (discountType !== undefined) {
+      promotion.discountType = discountType === 'Fixed' ? 'Fixed' : 'Percentage';
+    }
+
+    if (discountValue !== undefined) {
+      const numericDiscountValue = toNumber(discountValue);
+      if (!numericDiscountValue) {
+        return res.status(400).json({ message: 'Discount value is required.' });
+      }
+      promotion.discountValue = numericDiscountValue;
+    }
+
+    if (imageUrl !== undefined) promotion.imageUrl = String(imageUrl || '').trim();
+    if (endDate !== undefined) promotion.endDate = toDateOrNull(endDate);
+    if (active !== undefined) promotion.active = Boolean(active);
+    if (status !== undefined) {
+      promotion.status = promotion.active ? (status === 'Scheduled' ? 'Scheduled' : 'Active') : 'Paused';
+    } else if (active !== undefined && !promotion.active) {
+      promotion.status = 'Paused';
+    }
+
+    await promotion.save();
+
+    return res.status(200).json({
+      message: 'Promotion updated successfully.',
+      promotion: buildPromotionResponse(promotion),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to update promotion' });
+  }
+};
+
+const deletePromotion = async (req, res) => {
+  try {
+    const promotion = await Promotion.findByIdAndDelete(req.params.id);
+    if (!promotion) {
+      return res.status(404).json({ message: 'Promotion not found.' });
+    }
+
+    return res.status(200).json({
+      message: 'Promotion deleted successfully.',
+      id: req.params.id,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Unable to delete promotion' });
+  }
+};
+
+module.exports = {
+  listPromotions,
+  validatePromotion,
+  createPromotion,
+  updatePromotion,
+  deletePromotion,
+};
